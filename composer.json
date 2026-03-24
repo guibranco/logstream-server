@@ -1,0 +1,20 @@
+{
+  "name": "logservice/logservice",
+  "description": "A lightweight log ingestion and streaming service",
+  "type": "project",
+  "require": {
+    "php": ">=8.3",
+    "cboden/ratchet": "^0.4",
+    "react/http": "^1.9",
+    "react/socket": "^1.15",
+    "vlucas/phpdotenv": "^5.6"
+  },
+  "autoload": {
+    "psr-4": {
+      "LogService\\": "src/"
+    }
+  },
+  "config": {
+    "optimize-autoloader": true
+  }
+}
