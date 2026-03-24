@@ -1,0 +1,53 @@
+services:
+
+  # ── Application ──────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"   # HTTP API
+      - "8080:8080"   # WebSocket
+    environment:
+      HTTP_PORT:    8081
+      WS_PORT:      8080
+      API_SECRET:   ${API_SECRET:-test-secret}
+      STORAGE_TYPE: ${STORAGE_TYPE:-mariadb}
+      DB_HOST:      db
+      DB_PORT:      3306
+      DB_NAME:      logservice
+      DB_USER:      logservice
+      DB_PASS:      test
+      LOG_PATH:     /app/storage/logs
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:         ["CMD", "curl", "-fsS", "http://localhost:8081/api/health"]
+      interval:     5s
+      timeout:      3s
+      start_period: 15s
+      retries:      10
+    restart: unless-stopped
+
+  # ── MariaDB ──────────────────────────────────────────────────────────────────
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: rootsecret
+      MARIADB_DATABASE:      logservice
+      MARIADB_USER:          logservice
+      MARIADB_PASSWORD:      test
+    volumes:
+      - db_data:/var/lib/mysql
+      # Automatically apply the migration on first run
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:         ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval:     5s
+      timeout:      3s
+      start_period: 30s
+      retries:      10
+
+volumes:
+  db_data:
