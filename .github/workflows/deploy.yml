@@ -217,7 +217,7 @@ jobs:
           fetch-depth: 0
 
       - name: 🔍 Detect changes in SQL scripts
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         id: changes
         with:
           filters: |
