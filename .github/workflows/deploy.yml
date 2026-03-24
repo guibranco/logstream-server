@@ -1,0 +1,298 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+
+  # ── 1. Run the full test suite first ─────────────────────────────────────────
+  test:
+    name: 🧪 Test Before Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐘 Setup PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: sockets, pcntl, pdo_mysql
+          coverage: none
+
+      - name: 💾 Cache Composer dependencies
+        uses: actions/cache@v5
+        with:
+          path: /tmp/composer-cache
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: 📦 Install PHP dependencies (with dev)
+        run: composer install --no-interaction --no-progress
+
+      - name: 🧪 Run unit tests
+        run: vendor/bin/phpunit --testdox --testsuite unit
+
+      - name: 🐳 Build and start containers
+        run: API_SECRET=test-secret docker compose up -d --build
+
+      - name: 🔧 Make scripts executable
+        run: |
+          chmod +x Tools/wait-for-healthy.sh
+          chmod +x Tests/endpoint-tests.sh
+
+      - name: ⏳ Wait for all containers to be healthy
+        run: Tools/wait-for-healthy.sh 120
+
+      - name: 🔌 Run HTTP endpoint tests
+        run: Tests/endpoint-tests.sh http://localhost:8081 test-secret
+
+      - name: 📋 Dump container logs on failure
+        if: failure()
+        run: docker compose logs --tail=100
+
+      - name: 🛑 Stop containers
+        if: always()
+        run: docker compose down -v
+
+  # ── 2. Build the production artefact ─────────────────────────────────────────
+  build:
+    name: 📦 Build Production Artefact
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [test]
+    outputs:
+      version: ${{ steps.gitversion.outputs.fullSemVer }}
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔧 Install GitVersion
+        uses: gittools/actions/gitversion/setup@v4.4.2
+        with:
+          versionSpec: "6.x"
+
+      - name: 🏷️ Determine version number
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@v4.4.2
+
+      - name: 🐘 Setup PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: sockets, pcntl, pdo_mysql
+          coverage: none
+
+      - name: 💾 Cache Composer dependencies
+        uses: actions/cache@v5
+        with:
+          path: /tmp/composer-cache
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: 📦 Install PHP dependencies (production, no dev)
+        run: |
+          composer install \
+            --no-dev \
+            --no-interaction \
+            --optimize-autoloader \
+            --no-progress
+
+      - name: 📝 Write version file
+        run: echo "${{ steps.gitversion.outputs.fullSemVer }}" > version.txt
+
+      - name: 🗜️ Package artefact (excluding dev/CI files)
+        run: |
+          zip -r deploy.zip . \
+            --exclude "*.git*" \
+            --exclude "tests/*" \
+            --exclude "Tests/*" \
+            --exclude "*.github*" \
+            --exclude "docker-compose.yml" \
+            --exclude "Dockerfile" \
+            --exclude "phpunit.xml" \
+            --exclude "*.env*" \
+            --exclude "storage/logs/*"
+
+      - name: 📤 Upload artefact for deploy job
+        uses: actions/upload-artifact@v4
+        with:
+          name: logstream-server-${{ steps.gitversion.outputs.fullSemVer }}
+          path: deploy.zip
+          retention-days: 7
+
+  # ── 3. Upload to SFTP host ────────────────────────────────────────────────────
+  deploy:
+    name: 🚀 Deploy via SFTP
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [build]
+    environment: production
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download build artefact
+        uses: actions/download-artifact@v4
+        with:
+          name: logstream-server-${{ needs.build.outputs.version }}
+          path: ./dist
+
+      - name: 📦 Unzip artefact for upload
+        run: unzip dist/deploy.zip -d dist/unpacked
+
+      - name: 🔑 Write SFTP private key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SFTP_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.SFTP_PORT || '22' }}" "${{ secrets.SFTP_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: 📤 Upload files via SFTP
+        run: |
+          sftp -i ~/.ssh/deploy_key \
+               -P "${{ secrets.SFTP_PORT || '22' }}" \
+               -o StrictHostKeyChecking=no \
+               -o BatchMode=yes \
+               "${{ secrets.SFTP_USER }}@${{ secrets.SFTP_HOST }}" <<EOF
+          cd ${{ secrets.SFTP_REMOTE_PATH }}
+          put -r dist/unpacked/* .
+          bye
+          EOF
+
+      - name: ♻️ Restart server process via SSH
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+              -p "${{ secrets.SFTP_PORT || '22' }}" \
+              -o StrictHostKeyChecking=no \
+              "${{ secrets.SFTP_USER }}@${{ secrets.SFTP_HOST }}" \
+              "sudo systemctl restart logstream-server"
+
+      - name: 🩺 Wait for health check after deploy
+        run: |
+          echo "Waiting for the server to come back online…"
+          for i in $(seq 1 20); do
+            HTTP=$(curl -o /dev/null -s -w "%{http_code}" \
+              "${{ secrets.HEALTH_CHECK_URL }}/api/health" || echo "000")
+            if [[ "$HTTP" == "200" ]]; then
+              echo "✅ Server is healthy (attempt $i)"
+              exit 0
+            fi
+            echo "   Attempt $i – got HTTP $HTTP, retrying in 5s…"
+            sleep 5
+          done
+          echo "❌ Server did not become healthy in time."
+          exit 1
+
+      - name: 🧹 Remove private key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+  # ── 4. Run migrations against production DB ───────────────────────────────────
+  database_migrations:
+    name: 🗄️ Run Database Migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: write
+    needs: [deploy]
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Detect changes in SQL scripts
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            sql:
+              - "migrations/**"
+              - "Tools/**"
+
+      - name: ⏭️ Skip if no SQL changes
+        if: steps.changes.outputs.sql == 'false'
+        run: echo "No migration changes detected — skipping."
+
+      - name: 🔐 Acquire WireGuard connection lock
+        if: steps.changes.outputs.sql == 'true'
+        uses: guibranco/github-artifact-lock-action@v3.0.21
+        with:
+          lock-name: wireguard-connection
+
+      - name: 🔌 Establish WireGuard VPN connection
+        if: steps.changes.outputs.sql == 'true'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          echo "WIREGUARD_CONNECTED=true" >> $GITHUB_ENV
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wireguard wireguard-tools resolvconf
+          echo "${{ secrets.WIREGUARD_CONFIG }}" > wg0.conf
+          sudo chmod 600 wg0.conf
+          sudo modprobe wireguard
+          sudo wg-quick up ./wg0.conf
+
+      - name: 🗄️ Run database migrations
+        if: steps.changes.outputs.sql == 'true'
+        id: migrations
+        timeout-minutes: 10
+        env:
+          MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD_MIGRATION }}
+        run: |
+          chmod +x Tools/db-migration.sh
+          Tools/db-migration.sh migrations \
+            "${{ secrets.MYSQL_SERVER }}" \
+            "${{ secrets.MYSQL_USER_MIGRATION }}" \
+            "${{ secrets.MYSQL_DATABASE }}"
+
+      - name: 🔓 Disconnect WireGuard VPN
+        if: always() && env.WIREGUARD_CONNECTED == 'true'
+        shell: bash
+        run: sudo wg-quick down ./wg0.conf
+
+      - name: 🔑 Release WireGuard connection lock
+        if: always() && steps.changes.outputs.sql == 'true'
+        uses: guibranco/github-artifact-lock-action/release-lock@v3.0.21
+        with:
+          lock-name: wireguard-connection
+
+  # ── 5. Create GitHub release ──────────────────────────────────────────────────
+  create_release:
+    name: 📢 Create GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    needs: [build, deploy, database_migrations]
+
+    steps:
+      - name: 🏷️ Create and publish release
+        uses: ncipollo/release-action@v1.21.0
+        with:
+          skipIfReleaseExists: true
+          allowUpdates: false
+          draft: false
+          makeLatest: true
+          tag: v${{ needs.build.outputs.version }}
+          name: Release v${{ needs.build.outputs.version }}
+          generateReleaseNotes: true
+          body: |
+            ## logstream-server v${{ needs.build.outputs.version }}
+
+            Release of ${{ github.repository }} — built from `${{ github.sha }}`.

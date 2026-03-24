@@ -1,0 +1,256 @@
+name: Build and Test
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+
+  # ── Unit tests (no Docker needed) ────────────────────────────────────────────
+  unit_tests:
+    name: 🧪 Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐘 Setup PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: sockets, pcntl, pdo_mysql
+          coverage: none
+
+      - name: 💾 Cache Composer dependencies
+        uses: actions/cache@v5
+        with:
+          path: /tmp/composer-cache
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: 📦 Install PHP dependencies (with dev)
+        run: composer install --no-interaction --no-progress
+
+      - name: 🧪 Run unit tests
+        id: unit_tests
+        run: vendor/bin/phpunit --testdox --testsuite unit 2>&1 | tee /tmp/phpunit_output.txt
+
+      - name: ❌ Comment on PR – unit tests failed
+        if: failure() && steps.unit_tests.outcome == 'failure'
+        uses: mshick/add-pr-comment@v2
+        with:
+          refresh-message-position: true
+          message-id: unit-tests
+          message: |
+            🧪 **Unit test summary**
+
+            ❌ Unit tests failed.
+
+            <details>
+              <summary>PHPUnit output</summary>
+
+              ```
+              ${{ steps.unit_tests.outputs.stdout }}
+              ```
+
+            </details>
+
+      - name: ✅ Comment on PR – unit tests passed
+        if: success()
+        uses: mshick/add-pr-comment@v2
+        with:
+          refresh-message-position: true
+          message-id: unit-tests
+          message: |
+            🧪 **Unit test summary**
+
+            ✅ All unit tests passed.
+
+  # ── Integration: spin up Docker, run endpoint tests ──────────────────────────
+  integration_tests:
+    name: 🔌 Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🐳 Build and start containers
+        run: |
+          API_SECRET=test-secret docker compose up -d --build
+
+      - name: 🔧 Make scripts executable
+        run: |
+          chmod +x Tools/wait-for-healthy.sh
+          chmod +x Tests/endpoint-tests.sh
+
+      - name: ⏳ Wait for all containers to be healthy
+        run: Tools/wait-for-healthy.sh 120
+
+      - name: 🔌 Run HTTP endpoint tests
+        id: endpoint_tests
+        run: |
+          Tests/endpoint-tests.sh http://localhost:8081 test-secret 2>&1 | tee /tmp/endpoint_output.txt
+          echo "stdout<<EOF" >> $GITHUB_OUTPUT
+          cat /tmp/endpoint_output.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: 🌐 Verify WebSocket port is open
+        id: ws_check
+        run: |
+          if timeout 5 bash -c 'echo >/dev/tcp/localhost/8080' 2>/dev/null; then
+            echo "✅ WebSocket port 8080 is open"
+          else
+            echo "❌ WebSocket port 8080 is not reachable"
+            echo "error=true" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: 📋 Dump container logs on failure
+        if: failure()
+        run: docker compose logs --tail=100
+
+      - name: 🛑 Stop containers
+        if: always()
+        run: docker compose down -v
+
+      - name: ❌ Comment on PR – integration tests failed
+        if: failure() && steps.endpoint_tests.outputs.error == 'true'
+        uses: mshick/add-pr-comment@v2
+        with:
+          refresh-message-position: true
+          message-id: integration-tests
+          message: |
+            🔌 **Integration test summary**
+
+            ❌ HTTP endpoint tests failed.
+
+            <details>
+              <summary>Test output</summary>
+
+              ```
+              ${{ steps.endpoint_tests.outputs.stdout }}
+              ```
+
+            </details>
+
+      - name: ✅ Comment on PR – integration tests passed
+        if: success()
+        uses: mshick/add-pr-comment@v2
+        with:
+          refresh-message-position: true
+          message-id: integration-tests
+          message: |
+            🔌 **Integration test summary**
+
+            ✅ All endpoint tests passed. WebSocket port confirmed open.
+
+  # ── Migration dry-run against the real DB (via WireGuard) ────────────────────
+  migration_dry_run:
+    name: 🗄️ Migration Dry Run
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🤖 Skip for Dependabot PRs
+        if: github.actor == 'dependabot[bot]'
+        run: echo "Skipping migration dry run for Dependabot PR."
+
+      - name: 🔐 Acquire WireGuard connection lock
+        if: github.actor != 'dependabot[bot]'
+        uses: guibranco/github-artifact-lock-action@v3.0.21
+        with:
+          lock-name: wireguard-connection
+
+      - name: 🔌 Establish WireGuard VPN connection
+        if: github.actor != 'dependabot[bot]'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          echo "WIREGUARD_CONNECTED=true" >> $GITHUB_ENV
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wireguard wireguard-tools resolvconf
+          echo "${{ secrets.WIREGUARD_CONFIG }}" > wg0.conf
+          sudo chmod 600 wg0.conf
+          sudo modprobe wireguard
+          sudo wg-quick up ./wg0.conf
+
+      - name: 🧪 Dry-run database migrations
+        if: github.actor != 'dependabot[bot]'
+        id: dry_run
+        timeout-minutes: 10
+        continue-on-error: true
+        env:
+          MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD_MIGRATION }}
+        run: |
+          chmod +x Tools/db-migration.sh
+          Tools/db-migration.sh migrations \
+            "${{ secrets.MYSQL_SERVER }}" \
+            "${{ secrets.MYSQL_USER_MIGRATION }}" \
+            "${{ secrets.MYSQL_DATABASE }}" \
+            --dry-run
+
+      - name: 🔓 Disconnect WireGuard VPN
+        if: always() && env.WIREGUARD_CONNECTED == 'true' && github.actor != 'dependabot[bot]'
+        shell: bash
+        run: sudo wg-quick down ./wg0.conf
+
+      - name: 🔑 Release WireGuard connection lock
+        if: always() && github.actor != 'dependabot[bot]'
+        uses: guibranco/github-artifact-lock-action/release-lock@v3.0.21
+        with:
+          lock-name: wireguard-connection
+
+      - name: ❌ Comment on PR – migration dry run failed
+        if: failure() && steps.dry_run.outputs.error == 'true' && github.actor != 'dependabot[bot]'
+        uses: mshick/add-pr-comment@v2
+        with:
+          refresh-message-position: true
+          message-id: migration-dry-run
+          message: |
+            🎲 **Database migration dry run**
+
+            ❌ The migration dry run failed.
+
+            `${{ steps.dry_run.outputs.error_message }}`
+
+      - name: 🚀 Comment on PR – migrations pending
+        if: steps.dry_run.outputs.files != '' && github.actor != 'dependabot[bot]'
+        uses: mshick/add-pr-comment@v2
+        with:
+          refresh-message-position: true
+          message-id: migration-dry-run
+          message: |
+            🎲 **Database migration dry run**
+
+            🚀 The following SQL files will be applied on merge:
+
+            ${{ steps.dry_run.outputs.files }}
+
+      - name: ✅ Comment on PR – no new migrations
+        if: steps.dry_run.outputs.files == '' && github.actor != 'dependabot[bot]'
+        uses: mshick/add-pr-comment@v2
+        with:
+          refresh-message-position: true
+          message-id: migration-dry-run
+          message: |
+            🎲 **Database migration dry run**
+
+            ✅ No new migrations — database is already up to date.
