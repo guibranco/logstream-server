@@ -90,7 +90,7 @@ jobs:
       - name: 🔧 Make scripts executable
         run: |
           chmod +x Tools/wait-for-healthy.sh
-          chmod +x Tests/endpoint-tests.sh
+          chmod +x tests/endpoint-tests.sh
 
       - name: ⏳ Wait for all containers to be healthy
         run: Tools/wait-for-healthy.sh 120
@@ -98,7 +98,7 @@ jobs:
       - name: 🔌 Run HTTP endpoint tests
         id: endpoint_tests
         run: |
-          Tests/endpoint-tests.sh http://localhost:8081 test-secret 2>&1 | tee /tmp/endpoint_output.txt
+          tests/endpoint-tests.sh http://localhost:8081 test-secret 2>&1 | tee /tmp/endpoint_output.txt
           echo "stdout<<EOF" >> $GITHUB_OUTPUT
           cat /tmp/endpoint_output.txt >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
