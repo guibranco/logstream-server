@@ -6,15 +6,18 @@ on:
 
 jobs:
 
-  # ── Unit tests (no Docker needed) ────────────────────────────────────────────
   unit_tests:
     name: 🧪 Unit Tests
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: write
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -71,15 +74,18 @@ jobs:
 
             ✅ All unit tests passed.
 
-  # ── Integration: spin up Docker, run endpoint tests ──────────────────────────
   integration_tests:
     name: 🔌 Integration Tests
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -153,7 +159,6 @@ jobs:
 
             ✅ All endpoint tests passed. WebSocket port confirmed open.
 
-  # ── Migration dry-run against the real DB (via WireGuard) ────────────────────
   migration_dry_run:
     name: 🗄️ Migration Dry Run
     runs-on: ubuntu-latest
@@ -165,7 +170,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
