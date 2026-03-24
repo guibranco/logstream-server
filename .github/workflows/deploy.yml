@@ -46,13 +46,13 @@ jobs:
       - name: 🔧 Make scripts executable
         run: |
           chmod +x Tools/wait-for-healthy.sh
-          chmod +x Tests/endpoint-tests.sh
+          chmod +x tests/endpoint-tests.sh
 
       - name: ⏳ Wait for all containers to be healthy
         run: Tools/wait-for-healthy.sh 120
 
       - name: 🔌 Run HTTP endpoint tests
-        run: Tests/endpoint-tests.sh http://localhost:8081 test-secret
+        run: tests/endpoint-tests.sh http://localhost:8081 test-secret
 
       - name: 📋 Dump container logs on failure
         if: failure()
