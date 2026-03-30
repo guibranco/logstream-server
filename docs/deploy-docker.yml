@@ -1,0 +1,506 @@
+---
+layout: default
+title: Docker
+nav_order: 4
+permalink: /deploy-docker
+description: >
+  Deploy logstream-server with Docker Compose, an Nginx reverse proxy container,
+  and automatic HTTPS via a Certbot container.
+---
+
+# Deploying logstream-server with Docker
+
+This guide covers deploying the logstream-server using Docker and Docker Compose, suitable for any host that can run Docker: a Linux VPS, a home server, or a cloud VM. HTTPS is handled by a dedicated Nginx + Certbot container — no host-level dependencies beyond Docker itself.
+
+---
+
+## Prerequisites
+
+- Any Linux host with Docker and Docker Compose installed (instructions below)
+- A domain name with an **A record** pointing to the server's public IP
+- Ports **80** and **443** open on the host firewall
+
+---
+
+## 1. Install Docker
+
+### Ubuntu / Debian
+
+```bash
+# Remove any old Docker packages
+sudo apt remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+
+# Install prerequisites
+sudo apt update
+sudo apt install -y ca-certificates curl gnupg
+
+# Add Docker's official GPG key and repository
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+    sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+    https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+    sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+
+# Allow your user to run Docker without sudo
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Verify
+docker --version
+docker compose version
+```
+
+### Windows / macOS
+
+Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and ensure it is running before continuing.
+
+---
+
+## 2. Clone the repository
+
+```bash
+git clone https://github.com/guibranco/logstream-server.git
+cd logstream-server
+```
+
+---
+
+## 3. Configure the environment
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Set your values:
+
+```env
+HTTP_PORT=8081
+WS_PORT=8080
+
+# Write key — used by your applications to POST logs
+API_SECRET=<generate-a-strong-secret>
+
+# Read key — used by the UI and authorised humans to view logs
+UI_SECRET=<generate-another-strong-secret>
+
+# Storage backend
+STORAGE_TYPE=mariadb   # or "file"
+LOG_PATH=./storage/logs
+
+# MariaDB (used when STORAGE_TYPE=mariadb)
+DB_HOST=db
+DB_PORT=3306
+DB_NAME=logservice
+DB_USER=logservice
+DB_PASS=<generate-a-strong-db-password>
+```
+
+Generate strong secrets:
+
+```bash
+openssl rand -base64 32
+```
+
+---
+
+## 4. Quick start (HTTP only, no reverse proxy)
+
+> Use this for **local development or testing only**. Skip to step 5 for a production HTTPS setup.
+
+The repository ships with a `docker-compose.yml` that starts the app and a MariaDB instance:
+
+```bash
+docker compose up -d
+```
+
+Check everything is running:
+
+```bash
+docker compose ps
+docker compose logs -f app
+```
+
+Verify the health endpoint:
+
+```bash
+curl -s http://localhost:8081/api/health | python3 -m json.tool
+```
+
+---
+
+## 5. Production setup with HTTPS (Nginx + Certbot)
+
+For production you need a reverse proxy that handles TLS termination. The cleanest Docker approach uses dedicated Nginx and Certbot containers alongside the app.
+
+### 5a. Create the production Compose file
+
+Create a new file `docker-compose.prod.yml` next to the existing one:
+
+```bash
+nano docker-compose.prod.yml
+```
+
+```yaml
+services:
+
+  # ── Application ──────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      HTTP_PORT:    8081
+      WS_PORT:      8080
+      API_SECRET:   ${API_SECRET}
+      UI_SECRET:    ${UI_SECRET}
+      STORAGE_TYPE: ${STORAGE_TYPE:-mariadb}
+      DB_HOST:      db
+      DB_PORT:      3306
+      DB_NAME:      ${DB_NAME:-logservice}
+      DB_USER:      ${DB_USER:-logservice}
+      DB_PASS:      ${DB_PASS}
+      LOG_PATH:     /app/storage/logs
+    volumes:
+      - log_data:/app/storage/logs
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test:         ["CMD", "curl", "-fsS", "http://localhost:8081/api/health"]
+      interval:     10s
+      timeout:      5s
+      start_period: 20s
+      retries:      5
+    restart: unless-stopped
+    # Not exposed to the host — Nginx reaches it on the internal network
+    expose:
+      - "8081"
+      - "8080"
+
+  # ── MariaDB ──────────────────────────────────────────────────────────────────
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASS:-rootsecret}
+      MARIADB_DATABASE:      ${DB_NAME:-logservice}
+      MARIADB_USER:          ${DB_USER:-logservice}
+      MARIADB_PASSWORD:      ${DB_PASS}
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:         ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval:     10s
+      timeout:      5s
+      start_period: 30s
+      retries:      10
+    restart: unless-stopped
+
+  # ── Nginx reverse proxy ───────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot_www:/var/www/certbot:ro
+      - certbot_certs:/etc/letsencrypt:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+
+  # ── Certbot (certificate management) ─────────────────────────────────────────
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot_www:/var/www/certbot
+      - certbot_certs:/etc/letsencrypt
+    # Renew automatically every 12 hours; exits immediately if nothing is due
+    entrypoint: >
+      /bin/sh -c "trap exit TERM;
+      while :; do
+        certbot renew --webroot --webroot-path=/var/www/certbot --quiet;
+        sleep 12h & wait $${!};
+      done"
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  log_data:
+  certbot_www:
+  certbot_certs:
+```
+
+### 5b. Create the Nginx configuration directory
+
+```bash
+mkdir -p nginx/conf.d
+```
+
+Create a temporary HTTP-only config to allow Certbot to issue the first certificate. Replace `logs.yourdomain.com` with your actual domain:
+
+```bash
+nano nginx/conf.d/logstream.conf
+```
+
+```nginx
+server {
+    listen 80;
+    listen [::]:80;
+    server_name logs.yourdomain.com;
+
+    # Certbot ACME challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # Temporary: proxy to the app while we wait for the certificate
+    location /api/ {
+        proxy_pass http://app:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Host            $host;
+        proxy_set_header X-Real-IP       $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+### 5c. Start the stack and issue the certificate
+
+```bash
+# Start Nginx and the app (Certbot starts too but will idle until triggered)
+docker compose -f docker-compose.prod.yml up -d
+
+# Check all containers are running
+docker compose -f docker-compose.prod.yml ps
+
+# Issue the certificate — replace the email and domain
+docker compose -f docker-compose.prod.yml run --rm certbot certonly \
+    --webroot \
+    --webroot-path=/var/www/certbot \
+    --email your@email.com \
+    --agree-tos \
+    --no-eff-email \
+    -d logs.yourdomain.com
+```
+
+### 5d. Switch Nginx to the full HTTPS config
+
+Now that the certificate exists, replace the Nginx config with the full HTTPS version:
+
+```bash
+nano nginx/conf.d/logstream.conf
+```
+
+```nginx
+# HTTP → HTTPS redirect
+server {
+    listen 80;
+    listen [::]:80;
+    server_name logs.yourdomain.com;
+
+    # Keep Certbot challenge working for renewals
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name logs.yourdomain.com;
+
+    # ── SSL ──────────────────────────────────────────────────────────────────
+    ssl_certificate     /etc/letsencrypt/live/logs.yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/logs.yourdomain.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # ── Security headers ─────────────────────────────────────────────────────
+    add_header X-Frame-Options        "SAMEORIGIN"    always;
+    add_header X-Content-Type-Options "nosniff"       always;
+    add_header X-XSS-Protection       "1; mode=block" always;
+    add_header Referrer-Policy        "no-referrer"   always;
+    add_header Strict-Transport-Security "max-age=63072000" always;
+
+    # ── HTTP API → app:8081 ───────────────────────────────────────────────────
+    location /api/ {
+        proxy_pass         http://app:8081;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_read_timeout    60s;
+        proxy_send_timeout    60s;
+        proxy_connect_timeout 10s;
+    }
+
+    # ── WebSocket → app:8080 ─────────────────────────────────────────────────
+    location /ws {
+        proxy_pass         http://app:8080;
+        proxy_http_version 1.1;
+
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_set_header Host            $host;
+        proxy_set_header X-Real-IP       $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        proxy_read_timeout  3600s;
+        proxy_send_timeout  3600s;
+    }
+}
+```
+
+Reload Nginx to apply the new config:
+
+```bash
+docker compose -f docker-compose.prod.yml exec nginx nginx -s reload
+```
+
+---
+
+## 6. Final end-to-end verification
+
+```bash
+# Health check over HTTPS
+curl -s https://logs.yourdomain.com/api/health | python3 -m json.tool
+
+# Confirm HTTP redirects to HTTPS
+curl -sI http://logs.yourdomain.com
+
+# Send a test log entry
+curl -s -X POST https://logs.yourdomain.com/api/logs \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer <API_SECRET>" \
+    -H "User-Agent: DockerTest/1.0" \
+    -d '{
+        "app_key":  "deploy-test",
+        "app_id":   "docker",
+        "level":    "info",
+        "category": "deployment",
+        "message":  "Server deployed successfully in Docker"
+    }' | python3 -m json.tool
+
+# Read it back
+curl -s "https://logs.yourdomain.com/api/logs?app_key=deploy-test" \
+    -H "Authorization: Bearer <UI_SECRET>" | python3 -m json.tool
+```
+
+---
+
+## Day-to-day operations
+
+### View live logs
+
+```bash
+# All containers
+docker compose -f docker-compose.prod.yml logs -f
+
+# App only
+docker compose -f docker-compose.prod.yml logs -f app
+
+# Nginx only
+docker compose -f docker-compose.prod.yml logs -f nginx
+```
+
+### Restart the service
+
+```bash
+docker compose -f docker-compose.prod.yml restart app
+```
+
+### Deploy a new version
+
+```bash
+# Pull latest code
+git pull origin main
+
+# Rebuild only the app image (db and nginx are unchanged)
+docker compose -f docker-compose.prod.yml build app
+
+# Recreate the app container with zero-downtime (Compose handles the swap)
+docker compose -f docker-compose.prod.yml up -d --no-deps app
+```
+
+### Run database migrations manually
+
+```bash
+docker compose -f docker-compose.prod.yml exec app \
+    bash Tools/db-migration.sh migrations db logservice logservice
+```
+
+### Check certificate status
+
+```bash
+docker compose -f docker-compose.prod.yml exec certbot certbot certificates
+```
+
+Force a renewal test:
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm certbot certbot renew --dry-run
+```
+
+### Stop everything
+
+```bash
+docker compose -f docker-compose.prod.yml down
+
+# Stop AND remove all volumes (wipes database and logs — irreversible)
+docker compose -f docker-compose.prod.yml down -v
+```
+
+---
+
+## Environment variable reference
+
+Add these to your `.env` file (or pass them directly to `docker compose`):
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `API_SECRET` | ✅ | Write key for `POST /api/logs` |
+| `UI_SECRET` | ✅ | Read key for `GET /api/logs` and WebSocket |
+| `STORAGE_TYPE` | ✅ | `mariadb` or `file` |
+| `DB_PASS` | ✅ (mariadb) | MariaDB user password |
+| `DB_ROOT_PASS` | ✅ (mariadb) | MariaDB root password |
+| `DB_NAME` | ❌ | Database name (default: `logservice`) |
+| `DB_USER` | ❌ | Database user (default: `logservice`) |
+| `HTTP_PORT` | ❌ | Internal HTTP port (default: `8081`) |
+| `WS_PORT` | ❌ | Internal WebSocket port (default: `8080`) |
+| `LOG_PATH` | ❌ | Log path when using file storage (default: `./storage/logs`) |
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| App container exits immediately | Bad `.env` values or DB not ready | `docker compose logs app` to inspect the error |
+| `db` container not healthy | MariaDB still initialising | Wait 30–60 s on first start — it runs the migration SQL |
+| Certbot fails to issue certificate | DNS not propagated or port 80 blocked | Verify `dig logs.yourdomain.com` points to the correct IP and port 80 is open |
+| Nginx returns 502 Bad Gateway | App container not healthy yet | `docker compose ps` — wait for app health check to pass |
+| `401 Unauthorized` on `POST /api/logs` | Wrong or missing `API_SECRET` | Check `Authorization: Bearer <API_SECRET>` header |
+| `401 Unauthorized` on `GET /api/logs` | Wrong or missing `UI_SECRET` | Check `Authorization: Bearer <UI_SECRET>` header |
+| WebSocket connection rejected | Wrong or missing token | Connect with `wss://domain/ws?token=<UI_SECRET>` |
+| Certificate not renewing | Certbot container not running | `docker compose -f docker-compose.prod.yml up -d certbot` |
+| Old image still running after `git pull` | Image not rebuilt | Always run `build app` before `up -d` when code changes |

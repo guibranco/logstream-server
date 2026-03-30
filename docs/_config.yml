@@ -1,0 +1,81 @@
+title: logstream-server
+description: >
+  Real-time log ingestion and streaming service —
+  deployment guides for Ubuntu, Windows, and Docker.
+url: "http://guilherme.stracini.com.br"
+baseurl: "/logstream-server"
+
+# ── Theme ─────────────────────────────────────────────────────────────────────
+remote_theme: just-the-docs/just-the-docs@v0.10.0
+
+# ── Plugins ───────────────────────────────────────────────────────────────────
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+# ── just-the-docs configuration ───────────────────────────────────────────────
+
+# Colour scheme: "light" or "dark"
+color_scheme: dark
+
+# Show the site name and logo in the sidebar header
+logo: "/assets/images/logo.png"     # optional — remove if you have no logo
+
+# Enable full-text search
+search_enabled: true
+search:
+  heading_level: 2
+  previews: 3
+  preview_words_before: 5
+  preview_words_after: 10
+  tokenizer_separator: /[\s/]+/
+  rel_url: true
+  button: false
+
+# Footer links
+footer_content: >
+  logstream-server is maintained by
+  <a href="https://github.com/guibranco">@guibranco</a>.
+  Released under the MIT licence.
+
+# Back to top link
+back_to_top: true
+back_to_top_text: "Back to top"
+
+# Last-edited timestamp (requires jekyll-last-modified-at plugin — optional)
+last_edit_timestamp: false
+
+# Navigation — pages are ordered by their front matter `nav_order` field
+nav_sort: order
+
+# Breadcrumb navigation
+breadcrumbs: true
+
+# External links open in a new tab
+external_links:
+  - url: https://github.com/guibranco/logstream-server
+    title: GitHub Repository
+
+# ── Markdown ──────────────────────────────────────────────────────────────────
+markdown: kramdown
+highlighter: rouge
+
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+  syntax_highlighter_opts:
+    css_class: "highlight"
+    block:
+      line_numbers: false
+
+# ── Exclusions ────────────────────────────────────────────────────────────────
+exclude:
+  - "*.sh"
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+
+# ── SEO ───────────────────────────────────────────────────────────────────────
+author: guibranco
+lang: en
