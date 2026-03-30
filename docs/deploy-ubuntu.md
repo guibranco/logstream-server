@@ -1,3 +1,13 @@
+---
+layout: default
+title: Ubuntu
+nav_order: 2
+permalink: /deploy-ubuntu
+description: >
+  Full manual deployment of logstream-server on Ubuntu 22.04 or 24.04 LTS
+  using PHP 8.3, systemd, Nginx, and Certbot.
+---
+
 # Deploying logstream-server on Ubuntu
 
 This guide covers a full manual deployment of the logstream-server on a fresh Ubuntu server (22.04 or 24.04 LTS), from a bare machine through to a running HTTPS service with Nginx and a systemd daemon.
