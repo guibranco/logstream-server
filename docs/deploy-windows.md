@@ -1,3 +1,13 @@
+---
+layout: default
+title: Windows
+nav_order: 3
+permalink: /deploy-windows
+description: >
+  Full manual deployment of logstream-server on Windows 10/11 or
+  Windows Server 2019/2022 using PHP 8.3 NTS and NSSM.
+---
+
 # Deploying logstream-server on Windows
 
 This guide covers a full manual deployment of the logstream-server on a Windows machine (Windows 10/11 or Windows Server 2019/2022), running as a background Windows Service using NSSM.
