@@ -1,3 +1,13 @@
+---
+layout: default
+title: Docker
+nav_order: 4
+permalink: /deploy-docker
+description: >
+  Deploy logstream-server with Docker Compose, an Nginx reverse proxy container,
+  and automatic HTTPS via a Certbot container.
+---
+
 # Deploying logstream-server with Docker
 
 This guide covers deploying the logstream-server using Docker and Docker Compose, suitable for any host that can run Docker: a Linux VPS, a home server, or a cloud VM. HTTPS is handled by a dedicated Nginx + Certbot container — no host-level dependencies beyond Docker itself.
