@@ -55,6 +55,16 @@ final class Router
             return $this->handleHealth($cors);
         }
 
+        // Swagger UI — public, no auth
+        if ($method === 'GET' && ($path === '/docs' || $path === '/')) {
+            return $this->serveFile(__DIR__ . '/../../public/swagger-ui.html', 'text/html');
+        }
+
+        // OpenAPI spec — public, no auth
+        if ($method === 'GET' && $path === '/openapi.yaml') {
+            return $this->serveFile(__DIR__ . '/../../public/openapi.yaml', 'application/yaml');
+        }
+
         // Write endpoints — require API_SECRET
         if ($method === 'POST' && $path === '/api/logs') {
             if (!$this->isAuthorised($request, $this->apiSecret)) {
@@ -236,6 +246,19 @@ final class Router
             'Access-Control-Allow-Methods' => 'GET, POST, OPTIONS',
             'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-App-Key, X-App-Id',
         ];
+    }
+
+    /** Serve a static file from disk with the given Content-Type. */
+    private function serveFile(string $path, string $contentType): Response
+    {
+        if (!file_exists($path) || !is_readable($path)) {
+            return $this->json(['error' => 'Not found'], 404);
+        }
+
+        return new Response(200, [
+            'Content-Type'  => $contentType . '; charset=utf-8',
+            'Cache-Control' => 'no-cache',
+        ], file_get_contents($path));
     }
 
     // ─── ID generators ────────────────────────────────────────────────────────
