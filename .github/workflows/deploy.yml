@@ -7,23 +7,21 @@ on:
 
 jobs:
 
-  # ── 1. Run the full test suite first ─────────────────────────────────────────
+  # ── 1. Unit tests ─────────────────────────────────────────────────────────────
   test:
-    name: 🧪 Test Before Deploy
+    name: 🧪 Unit Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
 
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
       - name: 🐘 Setup PHP 8.3
         uses: shivammathur/setup-php@v2
         with:
           php-version: "8.3"
-          extensions: sockets, pcntl, pdo_mysql
+          extensions: sockets, pcntl, pdo_mysql, zip
           coverage: none
 
       - name: 💾 Cache Composer dependencies
@@ -31,14 +29,24 @@ jobs:
         with:
           path: /tmp/composer-cache
           key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-composer-
+          restore-keys: ${{ runner.os }}-composer-
 
-      - name: 📦 Install PHP dependencies (with dev)
+      - name: 📦 Install dependencies
         run: composer install --no-interaction --no-progress
 
       - name: 🧪 Run unit tests
         run: vendor/bin/phpunit --testdox --testsuite unit
+
+  # ── 2. Integration tests ──────────────────────────────────────────────────────
+  integration_tests:
+    name: 🔌 Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [test]
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v6
 
       - name: 🐳 Build and start containers
         run: API_SECRET=test-secret UI_SECRET=test-ui-secret docker compose up -d --build
@@ -62,14 +70,14 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  # ── 2. Build the production artefact ─────────────────────────────────────────
-  build:
-    name: 📦 Build Production Artefact
+  # ── 3. Determine version ──────────────────────────────────────────────────────
+  version:
+    name: 🏷️ Determine Version
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [test]
+    timeout-minutes: 5
+    needs: [integration_tests]
     outputs:
-      version: ${{ steps.gitversion.outputs.fullSemVer }}
+      fullSemVer: ${{ steps.gitversion.outputs.fullSemVer }}
 
     steps:
       - name: 📥 Checkout code
@@ -86,123 +94,89 @@ jobs:
         id: gitversion
         uses: gittools/actions/gitversion/execute@v4.4.2
 
-      - name: 🐘 Setup PHP 8.3
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.3"
-          extensions: sockets, pcntl, pdo_mysql
-          coverage: none
-
-      - name: 💾 Cache Composer dependencies
-        uses: actions/cache@v5
-        with:
-          path: /tmp/composer-cache
-          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-composer-
-
-      - name: 📦 Install PHP dependencies (production, no dev)
-        run: |
-          composer install \
-            --no-dev \
-            --no-interaction \
-            --optimize-autoloader \
-            --no-progress
-
-      - name: 📝 Write version file
-        run: echo "${{ steps.gitversion.outputs.fullSemVer }}" > version.txt
-
-      - name: 🗜️ Package artefact (excluding dev/CI files)
-        run: |
-          zip -r deploy.zip . \
-            --exclude "*.git*" \
-            --exclude "tests/*" \
-            --exclude "Tests/*" \
-            --exclude "*.github*" \
-            --exclude "docker-compose.yml" \
-            --exclude "Dockerfile" \
-            --exclude "phpunit.xml" \
-            --exclude "*.env*" \
-            --exclude "storage/logs/*"
-
-      - name: 📤 Upload artefact for deploy job
-        uses: actions/upload-artifact@v7
-        with:
-          name: logstream-server-${{ steps.gitversion.outputs.fullSemVer }}
-          path: deploy.zip
-          retention-days: 7
-
-  # ── 3. Upload to SFTP host ────────────────────────────────────────────────────
+  # ── 4. Deploy via SSH (git pull) ──────────────────────────────────────────────
   deploy:
-    name: 🚀 Deploy via SFTP
+    name: 🚀 Deploy to Server
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [build]
+    needs: [version]
     environment: production
 
     steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v6
-
-      - name: 📥 Download build artefact
-        uses: actions/download-artifact@v8
-        with:
-          name: logstream-server-${{ needs.build.outputs.version }}
-          path: ./dist
-
-      - name: 📦 Unzip artefact for upload
-        run: unzip dist/deploy.zip -d dist/unpacked
-
-      - name: 🔑 Write SFTP private key
+      - name: 🔑 Write SSH private key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SFTP_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p "${{ secrets.SFTP_PORT || '22' }}" "${{ secrets.SFTP_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keyscan -p ${{ secrets.SSH_PORT || 22 }} ${{ secrets.SSH_HOST }} \
+            >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: 📤 Upload files via SFTP
-        run: |
-          sftp -i ~/.ssh/deploy_key \
-               -P "${{ secrets.SFTP_PORT || '22' }}" \
-               -o StrictHostKeyChecking=no \
-               -o BatchMode=yes \
-               "${{ secrets.SFTP_USER }}@${{ secrets.SFTP_HOST }}" <<EOF
-          cd ${{ secrets.SFTP_REMOTE_PATH }}
-          put -r dist/unpacked/* .
-          bye
-          EOF
-
-      - name: ♻️ Restart server process via SSH
+      - name: 🚀 Pull latest code and restart
         run: |
           ssh -i ~/.ssh/deploy_key \
-              -p "${{ secrets.SFTP_PORT || '22' }}" \
+              -p ${{ secrets.SSH_PORT || 22 }} \
               -o StrictHostKeyChecking=no \
-              "${{ secrets.SFTP_USER }}@${{ secrets.SFTP_HOST }}" \
-              "sudo systemctl restart logstream-server"
+              ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+              bash -s << 'ENDSSH'
+            set -e
 
-      - name: 🩺 Wait for health check after deploy
-        run: |
-          echo "Waiting for the server to come back online…"
-          for i in $(seq 1 20); do
-            HTTP=$(curl -o /dev/null -s -w "%{http_code}" \
-              "${{ secrets.HEALTH_CHECK_URL }}/api/health" || echo "000")
-            if [[ "$HTTP" == "200" ]]; then
-              echo "✅ Server is healthy (attempt $i)"
-              exit 0
+            echo "📥 Pulling latest code..."
+            cd /opt/logstream-server
+            sudo -u logstream git pull origin main
+
+            echo "📦 Installing dependencies..."
+            sudo -u logstream composer install \
+              --no-dev \
+              --optimize-autoloader \
+              --no-interaction \
+              --no-progress
+
+            echo "🔍 Verifying public/ directory..."
+            if [ -d "public" ]; then
+              echo "✅ public/ is present:"
+              ls -la public/
+            else
+              echo "❌ public/ directory is missing"
+              exit 1
             fi
-            echo "   Attempt $i – got HTTP $HTTP, retrying in 5s…"
-            sleep 5
-          done
-          echo "❌ Server did not become healthy in time."
-          exit 1
+
+            echo "♻️  Restarting service..."
+            sudo systemctl restart logstream-server
+
+            echo "⏳ Waiting for service to be healthy..."
+            for i in $(seq 1 20); do
+              HTTP=$(curl -o /dev/null -s -w "%{http_code}" \
+                http://localhost:8081/api/health || echo "000")
+              if [[ "$HTTP" == "200" ]]; then
+                echo "✅ Service is healthy (attempt $i)"
+                exit 0
+              fi
+              echo "   Attempt $i — HTTP $HTTP, retrying in 3s..."
+              sleep 3
+            done
+
+            echo "❌ Service did not become healthy in time"
+            exit 1
+          ENDSSH
+
+      - name: 🔍 Verify Swagger UI is reachable
+        run: |
+          HTTP=$(curl -o /dev/null -s -w "%{http_code}" \
+            "${{ secrets.HEALTH_CHECK_URL }}/docs")
+          if [[ "$HTTP" == "200" ]]; then
+            echo "✅ Swagger UI is reachable at /docs"
+          else
+            echo "⚠️  Swagger UI returned HTTP $HTTP — check public/ on the server"
+            exit 1
+          fi
 
       - name: 🧹 Remove private key
         if: always()
         run: rm -f ~/.ssh/deploy_key
 
-  # ── 4. Run migrations against production DB ───────────────────────────────────
+  # ── 5. Database migrations ────────────────────────────────────────────────────
   database_migrations:
-    name: 🗄️ Run Database Migrations
+    name: 🗄️ Database Migrations
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -216,83 +190,66 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: 🔍 Detect changes in SQL scripts
-        uses: dorny/paths-filter@v4
+      - name: 🔍 Detect SQL changes
+        uses: dorny/paths-filter@v3
         id: changes
         with:
           filters: |
             sql:
               - "migrations/**"
-              - "Tools/**"
 
       - name: ⏭️ Skip if no SQL changes
         if: steps.changes.outputs.sql == 'false'
-        run: echo "No migration changes detected — skipping."
+        run: echo "No migration changes — skipping."
 
-      - name: 🔐 Acquire WireGuard connection lock
+      - name: 🔑 Write SSH private key
         if: steps.changes.outputs.sql == 'true'
-        uses: guibranco/github-artifact-lock-action@v3.0.21
-        with:
-          lock-name: wireguard-connection
-
-      - name: 🔌 Establish WireGuard VPN connection
-        if: steps.changes.outputs.sql == 'true'
-        timeout-minutes: 5
-        shell: bash
         run: |
-          echo "WIREGUARD_CONNECTED=true" >> $GITHUB_ENV
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends wireguard wireguard-tools resolvconf
-          echo "${{ secrets.WIREGUARD_CONFIG }}" > wg0.conf
-          sudo chmod 600 wg0.conf
-          sudo modprobe wireguard
-          sudo wg-quick up ./wg0.conf
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p ${{ secrets.SSH_PORT || 22 }} ${{ secrets.SSH_HOST }} \
+            >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: 🗄️ Run database migrations
+      - name: 🗄️ Run migrations on server
         if: steps.changes.outputs.sql == 'true'
-        id: migrations
-        timeout-minutes: 10
-        env:
-          MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD_MIGRATION }}
         run: |
-          chmod +x Tools/db-migration.sh
-          Tools/db-migration.sh migrations \
-            "${{ secrets.MYSQL_SERVER }}" \
-            "${{ secrets.MYSQL_USER_MIGRATION }}" \
-            "${{ secrets.MYSQL_DATABASE }}"
+          ssh -i ~/.ssh/deploy_key \
+              -p ${{ secrets.SSH_PORT || 22 }} \
+              -o StrictHostKeyChecking=no \
+              ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+              bash -s << 'ENDSSH'
+            set -e
+            cd /opt/logstream-server
+            chmod +x Tools/db-migration.sh
+            Tools/db-migration.sh migrations \
+              "$DB_HOST" "$DB_USER" "$DB_NAME"
+          ENDSSH
 
-      - name: 🔓 Disconnect WireGuard VPN
-        if: always() && env.WIREGUARD_CONNECTED == 'true'
-        shell: bash
-        run: sudo wg-quick down ./wg0.conf
+      - name: 🧹 Remove private key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
 
-      - name: 🔑 Release WireGuard connection lock
-        if: always() && steps.changes.outputs.sql == 'true'
-        uses: guibranco/github-artifact-lock-action/release-lock@v3.0.21
-        with:
-          lock-name: wireguard-connection
-
-  # ── 5. Create GitHub release ──────────────────────────────────────────────────
+  # ── 6. GitHub Release ─────────────────────────────────────────────────────────
   create_release:
     name: 📢 Create GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: write
-    needs: [build, deploy, database_migrations]
+    needs: [version, deploy, database_migrations]
 
     steps:
-      - name: 🏷️ Create and publish release
+      - name: 🏷️ Create release
         uses: ncipollo/release-action@v1.21.0
         with:
           skipIfReleaseExists: true
           allowUpdates: false
           draft: false
           makeLatest: true
-          tag: v${{ needs.build.outputs.version }}
-          name: Release v${{ needs.build.outputs.version }}
+          tag: v${{ needs.version.outputs.fullSemVer }}
+          name: Release v${{ needs.version.outputs.fullSemVer }}
           generateReleaseNotes: true
           body: |
-            ## logstream-server v${{ needs.build.outputs.version }}
-
-            Release of ${{ github.repository }} — built from `${{ github.sha }}`.
+            ## logstream-server v${{ needs.version.outputs.fullSemVer }}
+            Built from `${{ github.sha }}`
