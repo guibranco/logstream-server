@@ -12,6 +12,7 @@ services:
       HTTP_PORT:    8081
       WS_PORT:      8080
       API_SECRET:   ${API_SECRET:-test-secret}
+      UI_SECRET:    ${UI_SECRET:-test-ui-secret}
       STORAGE_TYPE: ${STORAGE_TYPE:-mariadb}
       DB_HOST:      db
       DB_PORT:      3306

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Tests/endpoint-tests.sh
 # Hits the live HTTP server and validates responses.
-# Usage: Tests/endpoint-tests.sh <base_url> <api_secret>
-# Example: Tests/endpoint-tests.sh http://localhost:8081 my-secret
+# Usage: Tests/endpoint-tests.sh <base_url> <api_secret> <ui_secret>
+# Example: Tests/endpoint-tests.sh http://localhost:8081 my-write-secret my-read-secret
 
 set -euo pipefail
 
 BASE_URL="${1:-http://localhost:8081}"
 API_SECRET="${2:-test-secret}"
+UI_SECRET="${3:-test-ui-secret}"
 PASS=0
 FAIL=0
 ERRORS=()
@@ -52,7 +53,7 @@ json_field() {
     echo "$1" | grep -oP "\"$2\"\\s*:\\s*\"?\\K[^\",}]+" | head -1
 }
 
-# ── 1. Health ──────────────────────────────────────────────────────────────────
+# ── 1. Health (public — no auth required) ─────────────────────────────────────
 
 header "Health endpoint"
 
@@ -65,10 +66,11 @@ BODY=$(cat /tmp/ls_health_body.json)
 STATUS_VAL=$(json_field "$BODY" "status")
 assert_json_field "health.status == ok" "ok" "$STATUS_VAL"
 
-# ── 2. Auth guard ─────────────────────────────────────────────────────────────
+# ── 2. Auth guards ────────────────────────────────────────────────────────────
 
-header "Auth guard"
+header "Auth guards"
 
+# POST without API_SECRET → 401
 RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
     -X POST "$BASE_URL/api/logs" \
     -H "Content-Type: application/json" \
@@ -76,11 +78,33 @@ RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
 
 assert_status "POST /api/logs without auth → 401" "401" "$RESPONSE"
 
+# GET without UI_SECRET → 401
+RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+    "$BASE_URL/api/logs")
+
+assert_status "GET /api/logs without auth → 401" "401" "$RESPONSE"
+
+# GET with wrong token → 401
+RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer wrong-token" \
+    "$BASE_URL/api/logs")
+
+assert_status "GET /api/logs with wrong token → 401" "401" "$RESPONSE"
+
+# POST with UI_SECRET on a write endpoint → 401 (wrong key for wrong endpoint)
+RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "$BASE_URL/api/logs" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $UI_SECRET" \
+    -d '{"app_key":"x","app_id":"y","message":"ui key on write"}')
+
+assert_status "POST /api/logs with UI_SECRET → 401" "401" "$RESPONSE"
+
 # ── 3. Ingest – single entry ──────────────────────────────────────────────────
 
 header "Ingest single entry"
 
-INGEST_BODY=$(cat <<EOF
+INGEST_BODY=$(cat <<JSONEOF
 {
   "app_key":  "endpoint-test",
   "app_id":   "ci",
@@ -89,7 +113,7 @@ INGEST_BODY=$(cat <<EOF
   "message":  "Hello from endpoint test",
   "context":  {"run": "ci"}
 }
-EOF
+JSONEOF
 )
 
 RESPONSE=$(curl -s -o /tmp/ls_ingest_body.json -w "%{http_code}" \
@@ -114,7 +138,7 @@ header "Ingest batch"
 
 BATCH_ID="test-batch-$(date +%s)"
 
-BATCH_BODY=$(cat <<EOF
+BATCH_BODY=$(cat <<JSONEOF
 {
   "app_key":  "endpoint-test",
   "app_id":   "ci",
@@ -125,7 +149,7 @@ BATCH_BODY=$(cat <<EOF
     {"level": "debug",   "category": "ci-batch", "message": "Batch entry 3"}
   ]
 }
-EOF
+JSONEOF
 )
 
 RESPONSE=$(curl -s -o /tmp/ls_batch_body.json -w "%{http_code}" \
@@ -145,6 +169,7 @@ header "Get entry by ID"
 
 if [[ -n "$ENTRY_ID" ]]; then
     RESPONSE=$(curl -s -o /tmp/ls_getbyid_body.json -w "%{http_code}" \
+        -H "Authorization: Bearer $UI_SECRET" \
         "$BASE_URL/api/logs/$ENTRY_ID")
     assert_status "GET /api/logs/$ENTRY_ID" "200" "$RESPONSE"
 
@@ -161,6 +186,7 @@ header "Get entry by trace ID"
 
 if [[ -n "$TRACE_ID" ]]; then
     RESPONSE=$(curl -s -o /tmp/ls_gettrace_body.json -w "%{http_code}" \
+        -H "Authorization: Bearer $UI_SECRET" \
         "$BASE_URL/api/logs/$TRACE_ID")
     assert_status "GET /api/logs/$TRACE_ID (trace)" "200" "$RESPONSE"
 fi
@@ -170,6 +196,7 @@ fi
 header "Search"
 
 RESPONSE=$(curl -s -o /tmp/ls_search_body.json -w "%{http_code}" \
+    -H "Authorization: Bearer $UI_SECRET" \
     "$BASE_URL/api/logs?app_key=endpoint-test&app_id=ci")
 
 assert_status "GET /api/logs?app_key=endpoint-test" "200" "$RESPONSE"
@@ -189,6 +216,7 @@ fi
 header "Search by batch_id"
 
 RESPONSE=$(curl -s -o /tmp/ls_batch_search.json -w "%{http_code}" \
+    -H "Authorization: Bearer $UI_SECRET" \
     "$BASE_URL/api/logs?batch_id=$BATCH_ID")
 
 assert_status "GET /api/logs?batch_id=$BATCH_ID" "200" "$RESPONSE"
@@ -201,6 +229,7 @@ assert_json_field "batch search total == 3" "3" "$BTOTAL"
 header "Search by level"
 
 RESPONSE=$(curl -s -o /tmp/ls_level_search.json -w "%{http_code}" \
+    -H "Authorization: Bearer $UI_SECRET" \
     "$BASE_URL/api/logs?app_key=endpoint-test&level=error")
 
 assert_status "GET /api/logs?level=error" "200" "$RESPONSE"
@@ -210,11 +239,12 @@ assert_status "GET /api/logs?level=error" "200" "$RESPONSE"
 header "Not found"
 
 RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer $UI_SECRET" \
     "$BASE_URL/api/logs/00000000000000000000000000")
 
 assert_status "GET /api/logs/nonexistent → 404" "404" "$RESPONSE"
 
-# ── CORS preflight ────────────────────────────────────────────────────────────
+# ── 11. CORS preflight ────────────────────────────────────────────────────────
 
 header "CORS preflight"
 
@@ -239,8 +269,8 @@ if [[ "$FAIL" -gt 0 ]]; then
         echo "  • $err"
     done
     echo ""
-    echo "error=true"           >> "${GITHUB_OUTPUT:-/dev/null}"
-    echo "failed=$FAIL"         >> "${GITHUB_OUTPUT:-/dev/null}"
+    echo "error=true"   >> "${GITHUB_OUTPUT:-/dev/null}"
+    echo "failed=$FAIL" >> "${GITHUB_OUTPUT:-/dev/null}"
     exit 1
 fi
 
