@@ -26,11 +26,11 @@ assert_status() {
 
     if [[ "$actual" == "$expected" ]]; then
         green "$label → HTTP $actual"
-        ((PASS++))
+        PASS=$((PASS + 1))
     else
         red "$label → expected HTTP $expected, got HTTP $actual"
         ERRORS+=("$label: expected $expected got $actual")
-        ((FAIL++))
+        FAIL=$((FAIL + 1))
     fi
 }
 
@@ -41,11 +41,11 @@ assert_json_field() {
 
     if [[ "$actual" == "$expected" ]]; then
         green "$label → $actual"
-        ((PASS++))
+        PASS=$((PASS + 1))
     else
         red "$label → expected '$expected', got '$actual'"
         ERRORS+=("$label: expected '$expected' got '$actual'")
-        ((FAIL++))
+        FAIL=$((FAIL + 1))
     fi
 }
 
@@ -177,7 +177,7 @@ if [[ -n "$ENTRY_ID" ]]; then
     assert_json_field "entry id matches" "$ENTRY_ID" "$FOUND_ID"
 else
     red "Skipping get-by-id: no entry ID captured from ingest step"
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
 fi
 
 # ── 6. Get by trace ID ────────────────────────────────────────────────────────
@@ -204,11 +204,11 @@ assert_status "GET /api/logs?app_key=endpoint-test" "200" "$RESPONSE"
 TOTAL=$(json_field "$(cat /tmp/ls_search_body.json)" "total")
 if [[ "$TOTAL" -ge 4 ]]; then
     green "search total >= 4 (got $TOTAL)"
-    ((PASS++))
+    PASS=$((PASS + 1))
 else
     red "search total should be >= 4, got '$TOTAL'"
     ERRORS+=("search total: expected >=4 got $TOTAL")
-    ((FAIL++))
+    FAIL=$((FAIL + 1))
 fi
 
 # ── 8. Search by batch_id ─────────────────────────────────────────────────────
