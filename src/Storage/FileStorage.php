@@ -130,7 +130,9 @@ final class FileStorage implements StorageInterface
             return $this->allFiles();
         }
 
-        $start = ($from ?? new \DateTimeImmutable('-90 days'))->setTime(0, 0);
+        // When no lower bound is given scan from the Unix epoch so that
+        // historical entries are never excluded by an arbitrary cutoff.
+        $start = ($from ?? new \DateTimeImmutable('@0'))->setTime(0, 0);
         $end   = ($to   ?? new \DateTimeImmutable())->setTime(23, 59, 59);
 
         $files   = [];
@@ -198,13 +200,25 @@ final class FileStorage implements StorageInterface
         }
 
         if (!empty($filters['date_from'])) {
-            if (($entry['timestamp'] ?? '') < $filters['date_from']) {
+            try {
+                $entryTs  = new \DateTimeImmutable($entry['timestamp'] ?? 'now');
+                $filterTs = new \DateTimeImmutable($filters['date_from']);
+                if ($entryTs < $filterTs) {
+                    return false;
+                }
+            } catch (\Throwable) {
                 return false;
             }
         }
 
         if (!empty($filters['date_to'])) {
-            if (($entry['timestamp'] ?? '') > $filters['date_to']) {
+            try {
+                $entryTs  = new \DateTimeImmutable($entry['timestamp'] ?? 'now');
+                $filterTs = new \DateTimeImmutable($filters['date_to']);
+                if ($entryTs > $filterTs) {
+                    return false;
+                }
+            } catch (\Throwable) {
                 return false;
             }
         }
