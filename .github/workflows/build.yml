@@ -6,12 +6,9 @@ on:
 
 jobs:
 
+  # ── Unit tests (no Docker needed) ────────────────────────────────────────────
   unit_tests:
     name: 🧪 Unit Tests
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: write
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -74,12 +71,9 @@ jobs:
 
             ✅ All unit tests passed.
 
+  # ── Integration: spin up Docker, run endpoint tests ──────────────────────────
   integration_tests:
     name: 🔌 Integration Tests
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -91,7 +85,7 @@ jobs:
 
       - name: 🐳 Build and start containers
         run: |
-          API_SECRET=test-secret docker compose up -d --build
+          API_SECRET=test-secret UI_SECRET=test-ui-secret docker compose up -d --build
 
       - name: 🔧 Make scripts executable
         run: |
@@ -104,7 +98,7 @@ jobs:
       - name: 🔌 Run HTTP endpoint tests
         id: endpoint_tests
         run: |
-          tests/endpoint-tests.sh http://localhost:8081 test-secret 2>&1 | tee /tmp/endpoint_output.txt
+          tests/endpoint-tests.sh http://localhost:8081 test-secret test-ui-secret 2>&1 | tee /tmp/endpoint_output.txt
           echo "stdout<<EOF" >> $GITHUB_OUTPUT
           cat /tmp/endpoint_output.txt >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -159,6 +153,7 @@ jobs:
 
             ✅ All endpoint tests passed. WebSocket port confirmed open.
 
+  # ── Migration dry-run against the real DB (via WireGuard) ────────────────────
   migration_dry_run:
     name: 🗄️ Migration Dry Run
     runs-on: ubuntu-latest

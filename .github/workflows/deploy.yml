@@ -41,7 +41,7 @@ jobs:
         run: vendor/bin/phpunit --testdox --testsuite unit
 
       - name: 🐳 Build and start containers
-        run: API_SECRET=test-secret docker compose up -d --build
+        run: API_SECRET=test-secret UI_SECRET=test-ui-secret docker compose up -d --build
 
       - name: 🔧 Make scripts executable
         run: |
@@ -52,7 +52,7 @@ jobs:
         run: Tools/wait-for-healthy.sh 120
 
       - name: 🔌 Run HTTP endpoint tests
-        run: tests/endpoint-tests.sh http://localhost:8081 test-secret
+        run: tests/endpoint-tests.sh http://localhost:8081 test-secret test-ui-secret
 
       - name: 📋 Dump container logs on failure
         if: failure()
