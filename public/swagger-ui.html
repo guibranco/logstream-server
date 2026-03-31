@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>logstream-server — API Docs</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.17.14/swagger-ui.min.css" />
+  <style>
+    /* ── Base reset ────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      background: #0f1117;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    /* ── Top banner ────────────────────────────────────────────────────────── */
+    .ls-banner {
+      background: linear-gradient(135deg, #1a1d27 0%, #12151f 100%);
+      border-bottom: 1px solid #2a2d3d;
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      height: 56px;
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+    }
+
+    .ls-banner__logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+    }
+
+    .ls-banner__icon {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+
+    .ls-banner__name {
+      font-size: 15px;
+      font-weight: 600;
+      color: #e2e8f0;
+      letter-spacing: -0.01em;
+    }
+
+    .ls-banner__version {
+      font-size: 11px;
+      color: #64748b;
+      background: #1e2130;
+      border: 1px solid #2a2d3d;
+      border-radius: 4px;
+      padding: 2px 7px;
+    }
+
+    .ls-banner__spacer { flex: 1; }
+
+    .ls-banner__link {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: #64748b;
+      text-decoration: none;
+      font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      transition: color 0.15s, background 0.15s;
+    }
+    .ls-banner__link:hover { color: #94a3b8; background: #1e2130; }
+
+    .ls-banner__health {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #64748b;
+      padding: 0 12px;
+      border-left: 1px solid #2a2d3d;
+    }
+    .ls-banner__health-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #374151;
+    }
+    .ls-banner__health-dot.online  { background: #22c55e; box-shadow: 0 0 6px #22c55e88; }
+    .ls-banner__health-dot.offline { background: #ef4444; }
+
+    /* ── Auth notice ───────────────────────────────────────────────────────── */
+    .ls-auth-notice {
+      background: #12151f;
+      border-bottom: 1px solid #2a2d3d;
+      padding: 10px 24px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    .ls-auth-notice__label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #64748b;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .ls-auth-key {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .ls-auth-key__badge {
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: 4px;
+      padding: 2px 7px;
+    }
+    .ls-auth-key__badge.write {
+      background: #1c2a1c;
+      color: #4ade80;
+      border: 1px solid #166534;
+    }
+    .ls-auth-key__badge.read {
+      background: #1c1f2e;
+      color: #60a5fa;
+      border: 1px solid #1d4ed8;
+    }
+    .ls-auth-key__desc {
+      font-size: 12px;
+      color: #475569;
+    }
+    .ls-auth-key__code {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 11px;
+      background: #1e2130;
+      color: #94a3b8;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    /* ── Swagger UI overrides ──────────────────────────────────────────────── */
+    #swagger-ui {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px 16px 48px;
+    }
+
+    /* Hide the default Swagger top bar (we have our own) */
+    .swagger-ui .topbar { display: none !important; }
+
+    /* Dark theme overrides */
+    .swagger-ui,
+    .swagger-ui .wrapper,
+    .swagger-ui .opblock-tag-section,
+    .swagger-ui .opblock,
+    .swagger-ui .scheme-container,
+    .swagger-ui section.models {
+      background: transparent !important;
+    }
+
+    .swagger-ui .info { margin: 0 0 24px; }
+    .swagger-ui .info .title { color: #e2e8f0; font-size: 26px; }
+    .swagger-ui .info .description p,
+    .swagger-ui .info .description td,
+    .swagger-ui .info .description th,
+    .swagger-ui .info li { color: #94a3b8 !important; }
+    .swagger-ui .info table { border-color: #2a2d3d !important; }
+    .swagger-ui .info th { background: #1a1d27 !important; color: #cbd5e1 !important; }
+    .swagger-ui .info td { color: #94a3b8 !important; }
+
+    .swagger-ui .opblock-tag { color: #cbd5e1 !important; border-bottom-color: #2a2d3d !important; }
+    .swagger-ui .opblock-tag:hover { background: #1a1d27 !important; }
+
+    .swagger-ui .opblock {
+      border-radius: 8px !important;
+      border: 1px solid #2a2d3d !important;
+      margin-bottom: 8px !important;
+      background: #12151f !important;
+    }
+    .swagger-ui .opblock .opblock-summary { background: transparent !important; }
+    .swagger-ui .opblock .opblock-summary-description { color: #94a3b8 !important; }
+    .swagger-ui .opblock .opblock-summary-path { color: #e2e8f0 !important; }
+
+    /* Method colours */
+    .swagger-ui .opblock.opblock-get    { border-left: 3px solid #3b82f6 !important; }
+    .swagger-ui .opblock.opblock-post   { border-left: 3px solid #22c55e !important; }
+    .swagger-ui .opblock.opblock-delete { border-left: 3px solid #ef4444 !important; }
+    .swagger-ui .opblock.opblock-put    { border-left: 3px solid #f59e0b !important; }
+    .swagger-ui .opblock.opblock-patch  { border-left: 3px solid #a855f7 !important; }
+
+    .swagger-ui .opblock-body,
+    .swagger-ui .opblock-description-wrapper,
+    .swagger-ui .response-col_description,
+    .swagger-ui .response-col_status,
+    .swagger-ui table thead tr th,
+    .swagger-ui table thead tr td { color: #94a3b8 !important; }
+
+    .swagger-ui .tab li,
+    .swagger-ui .parameter__name,
+    .swagger-ui .parameter__type,
+    .swagger-ui label { color: #94a3b8 !important; }
+
+    .swagger-ui input[type=text],
+    .swagger-ui input[type=password],
+    .swagger-ui textarea,
+    .swagger-ui select {
+      background: #1e2130 !important;
+      color: #e2e8f0 !important;
+      border-color: #2a2d3d !important;
+    }
+
+    .swagger-ui .btn { border-radius: 6px !important; }
+    .swagger-ui .btn.authorize { background: #1d4ed8 !important; border-color: #1d4ed8 !important; color: #fff !important; }
+    .swagger-ui .btn.execute   { background: #15803d !important; border-color: #15803d !important; color: #fff !important; }
+
+    .swagger-ui .model-box,
+    .swagger-ui section.models .model-container { background: #1a1d27 !important; border-color: #2a2d3d !important; }
+    .swagger-ui .model { color: #94a3b8 !important; }
+    .swagger-ui .model-title { color: #cbd5e1 !important; }
+
+    .swagger-ui .highlight-code pre,
+    .swagger-ui .microlight { background: #0f1117 !important; color: #94a3b8 !important; }
+
+    .swagger-ui .scheme-container { background: #12151f !important; box-shadow: none !important; border: 1px solid #2a2d3d; border-radius: 8px; padding: 12px 16px !important; }
+
+    .swagger-ui .auth-wrapper { background: #12151f !important; }
+    .swagger-ui .auth-container { background: #1a1d27 !important; border-color: #2a2d3d !important; }
+    .swagger-ui .dialog-ux .modal-ux { background: #1a1d27 !important; border-color: #2a2d3d !important; }
+    .swagger-ui .dialog-ux .modal-ux-header { border-bottom-color: #2a2d3d !important; }
+    .swagger-ui .dialog-ux .modal-ux-header h3 { color: #e2e8f0 !important; }
+
+    .swagger-ui .servers-title,
+    .swagger-ui .servers > label { color: #94a3b8 !important; }
+    .swagger-ui .servers select { background: #1e2130 !important; color: #e2e8f0 !important; border-color: #2a2d3d !important; }
+  </style>
+</head>
+<body>
+
+  <!-- ── Top banner ──────────────────────────────────────────────────────────── -->
+  <header class="ls-banner">
+    <a class="ls-banner__logo" href="/">
+      <div class="ls-banner__icon">📡</div>
+      <span class="ls-banner__name">logstream-server</span>
+    </a>
+    <span class="ls-banner__version">v1.0.0</span>
+    <div class="ls-banner__spacer"></div>
+    <a class="ls-banner__link" href="https://github.com/guibranco/logstream-server" target="_blank" rel="noopener">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+    <div class="ls-banner__health">
+      <div class="ls-banner__health-dot" id="health-dot"></div>
+      <span id="health-label">checking…</span>
+    </div>
+  </header>
+
+  <!-- ── Auth key reference bar ──────────────────────────────────────────────── -->
+  <div class="ls-auth-notice">
+    <span class="ls-auth-notice__label">Auth</span>
+
+    <div class="ls-auth-key">
+      <span class="ls-auth-key__badge write">Write key</span>
+      <span class="ls-auth-key__desc">
+        <code class="ls-auth-key__code">API_SECRET</code>
+        — required on <code class="ls-auth-key__code">POST /api/logs</code>
+      </span>
+    </div>
+
+    <div class="ls-auth-key">
+      <span class="ls-auth-key__badge read">Read key</span>
+      <span class="ls-auth-key__desc">
+        <code class="ls-auth-key__code">UI_SECRET</code>
+        — required on <code class="ls-auth-key__code">GET /api/logs</code>,
+        <code class="ls-auth-key__code">GET /api/logs/{id}</code>, and
+        WebSocket connections (<code class="ls-auth-key__code">?token=</code>)
+      </span>
+    </div>
+  </div>
+
+  <!-- ── Swagger UI mount point ───────────────────────────────────────────────── -->
+  <div id="swagger-ui"></div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.17.14/swagger-ui-bundle.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.17.14/swagger-ui-standalone-preset.min.js"></script>
+  <script>
+    // ── Health check pulse ──────────────────────────────────────────────────────
+    (function checkHealth() {
+      const dot   = document.getElementById('health-dot');
+      const label = document.getElementById('health-label');
+
+      function ping() {
+        fetch('/api/health')
+          .then(r => r.json())
+          .then(data => {
+            dot.className   = 'ls-banner__health-dot online';
+            label.textContent = `online · ${data.ws_connections} ws`;
+          })
+          .catch(() => {
+            dot.className   = 'ls-banner__health-dot offline';
+            label.textContent = 'offline';
+          });
+      }
+
+      ping();
+      setInterval(ping, 15000);
+    })();
+
+    // ── Swagger UI init ─────────────────────────────────────────────────────────
+    window.onload = function () {
+      SwaggerUIBundle({
+        url:          '/openapi.yaml',
+        dom_id:       '#swagger-ui',
+        deepLinking:  true,
+        presets: [
+          SwaggerUIBundle.presets.apis,
+          SwaggerUIStandalonePreset,
+        ],
+        plugins: [
+          SwaggerUIBundle.plugins.DownloadUrl,
+        ],
+        layout:           'StandaloneLayout',
+        defaultModelsExpandDepth: 1,
+        defaultModelExpandDepth:  2,
+        docExpansion:     'list',
+        filter:           true,
+        tryItOutEnabled:  true,
+        persistAuthorization: true,
+        requestInterceptor: function (request) {
+          // Swagger sends "Bearer undefined" when no token is set — clean it up
+          const auth = request.headers['Authorization'];
+          if (auth === 'Bearer undefined' || auth === 'Bearer ') {
+            delete request.headers['Authorization'];
+          }
+          return request;
+        },
+      });
+    };
+  </script>
+</body>
+</html>
