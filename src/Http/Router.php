@@ -13,6 +13,13 @@ use React\Http\Message\Response;
 /**
  * Minimal HTTP router for the log ingestion and query API.
  *
+ * Authentication:
+ *   POST /api/logs          → requires Bearer <API_SECRET>   (write key, for your apps)
+ *   GET  /api/logs          → requires Bearer <UI_SECRET>    (read key,  for the UI)
+ *   GET  /api/logs/{id}     → requires Bearer <UI_SECRET>
+ *   GET  /api/health        → public (no auth required)
+ *   OPTIONS *               → public (CORS preflight)
+ *
  * Routes:
  *   POST   /api/logs          – ingest one or many log entries
  *   GET    /api/logs          – search / paginate logs
@@ -26,6 +33,7 @@ final class Router
         private readonly StorageInterface $storage,
         private readonly LogHub $hub,
         private readonly string $apiSecret,
+        private readonly string $uiSecret,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -37,31 +45,40 @@ final class Router
 
         $cors = $this->corsHeaders();
 
-        // CORS preflight
+        // CORS preflight — always allow
         if ($method === 'OPTIONS') {
             return new Response(204, $cors);
         }
 
-        // Auth required on write endpoints
-        if ($method === 'POST' && !$this->isAuthorised($request)) {
-            return $this->json(['error' => 'Unauthorized'], 401, $cors);
+        // Health check — public, no auth
+        if ($method === 'GET' && $path === '/api/health') {
+            return $this->handleHealth($cors);
         }
 
-        return match (true) {
-            $method === 'GET'  && $path === '/api/health'
-                => $this->handleHealth($cors),
+        // Write endpoints — require API_SECRET
+        if ($method === 'POST' && $path === '/api/logs') {
+            if (!$this->isAuthorised($request, $this->apiSecret)) {
+                return $this->json(['error' => 'Unauthorized'], 401, $cors);
+            }
+            return $this->handleIngest($request, $cors);
+        }
 
-            $method === 'POST' && $path === '/api/logs'
-                => $this->handleIngest($request, $cors),
+        // Read endpoints — require UI_SECRET
+        if ($method === 'GET' && $path === '/api/logs') {
+            if (!$this->isAuthorised($request, $this->uiSecret)) {
+                return $this->json(['error' => 'Unauthorized'], 401, $cors);
+            }
+            return $this->handleSearch($request, $cors);
+        }
 
-            $method === 'GET'  && $path === '/api/logs'
-                => $this->handleSearch($request, $cors),
+        if ($method === 'GET' && preg_match('#^/api/logs/([^/]+)$#', $path, $m)) {
+            if (!$this->isAuthorised($request, $this->uiSecret)) {
+                return $this->json(['error' => 'Unauthorized'], 401, $cors);
+            }
+            return $this->handleGetById($m[1], $cors);
+        }
 
-            $method === 'GET'  && preg_match('#^/api/logs/([^/]+)$#', $path, $m)
-                => $this->handleGetById($m[1], $cors),
-
-            default => $this->json(['error' => 'Not found'], 404, $cors),
-        };
+        return $this->json(['error' => 'Not found'], 404, $cors);
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -71,8 +88,8 @@ final class Router
     private function handleHealth(array $cors): Response
     {
         return $this->json([
-            'status' => 'ok',
-            'time'   => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339),
+            'status'         => 'ok',
+            'time'           => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339),
             'ws_connections' => $this->hub->getConnectionCount(),
         ], 200, $cors);
     }
@@ -87,9 +104,6 @@ final class Router
             return $this->json(['error' => 'Invalid JSON body'], 400, $cors);
         }
 
-        // Support two payloads:
-        //   A) { "app_key": "...", "app_id": "...", "logs": [...] }   ← batch
-        //   B) { "app_key": "...", "app_id": "...", "message": "..." } ← single
         $topAppKey    = $body['app_key']  ?? $request->getHeaderLine('X-App-Key')  ?: null;
         $topAppId     = $body['app_id']   ?? $request->getHeaderLine('X-App-Id')   ?: null;
         $topUserAgent = $request->getHeaderLine('User-Agent') ?: ($body['user_agent'] ?? null);
@@ -110,16 +124,16 @@ final class Router
             try {
                 $entry = LogEntry::fromArray([
                     'id'         => $this->ulid(),
-                    'trace_id'   => $raw['trace_id']  ?? $this->uuid4(),
-                    'batch_id'   => $raw['batch_id']  ?? $topBatchId,
-                    'app_key'    => $raw['app_key']   ?? $topAppKey,
-                    'app_id'     => $raw['app_id']    ?? $topAppId,
+                    'trace_id'   => $raw['trace_id']   ?? $this->uuid4(),
+                    'batch_id'   => $raw['batch_id']   ?? $topBatchId,
+                    'app_key'    => $raw['app_key']    ?? $topAppKey,
+                    'app_id'     => $raw['app_id']     ?? $topAppId,
                     'user_agent' => $raw['user_agent'] ?? $topUserAgent,
-                    'level'      => $raw['level']     ?? 'info',
-                    'category'   => $raw['category']  ?? 'general',
-                    'message'    => $raw['message']   ?? '',
-                    'context'    => $raw['context']   ?? null,
-                    'timestamp'  => $raw['timestamp'] ?? (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339_EXTENDED),
+                    'level'      => $raw['level']      ?? 'info',
+                    'category'   => $raw['category']   ?? 'general',
+                    'message'    => $raw['message']    ?? '',
+                    'context'    => $raw['context']    ?? null,
+                    'timestamp'  => $raw['timestamp']  ?? (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339_EXTENDED),
                     'created_at' => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339_EXTENDED),
                 ]);
 
@@ -184,12 +198,26 @@ final class Router
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────
 
-    private function isAuthorised(ServerRequestInterface $request): bool
+    private function isAuthorised(ServerRequestInterface $request, string $secret): bool
     {
-        if (empty($this->apiSecret)) {
-            return true; // Auth disabled
+        if (empty($secret)) {
+            return true; // Auth disabled — dev mode
         }
-        return $request->getHeaderLine('Authorization') === "Bearer {$this->apiSecret}";
+
+        $header = $request->getHeaderLine('Authorization');
+
+        // Bearer token in Authorization header
+        if (str_starts_with($header, 'Bearer ')) {
+            return hash_equals($secret, substr($header, 7));
+        }
+
+        // Fallback: token in query string (useful for quick curl tests)
+        $token = $request->getQueryParams()['token'] ?? '';
+        if (!empty($token)) {
+            return hash_equals($secret, $token);
+        }
+
+        return false;
     }
 
     private function json(array $data, int $status, array $extra = []): Response
@@ -212,10 +240,6 @@ final class Router
 
     // ─── ID generators ────────────────────────────────────────────────────────
 
-    /**
-     * Simple ULID-like monotonic ID (26-char Crockford Base32).
-     * Lexicographic order = chronological order.
-     */
     private function ulid(): string
     {
         static $lastMs  = 0;
@@ -234,25 +258,23 @@ final class Router
         $ts  = $ms;
         $out = '';
 
-        // 10 chars for timestamp
         for ($i = 9; $i >= 0; $i--) {
-            $out    = $enc[$ts % 32] . $out;
-            $ts     = intdiv($ts, 32);
+            $out = $enc[$ts % 32] . $out;
+            $ts  = intdiv($ts, 32);
         }
 
-        // 16 chars for randomness
         $rnd = $lastRnd;
         for ($i = 15; $i >= 0; $i--) {
             $out = $enc[$rnd % 32] . $out;
             $rnd = intdiv($rnd, 32);
         }
 
-        return strrev($out);  // low→high
+        return strrev($out);
     }
 
     private function uuid4(): string
     {
-        $bytes = random_bytes(16);
+        $bytes    = random_bytes(16);
         $bytes[6] = chr((ord($bytes[6]) & 0x0f) | 0x40);
         $bytes[8] = chr((ord($bytes[8]) & 0x3f) | 0x80);
 

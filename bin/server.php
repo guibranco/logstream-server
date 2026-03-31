@@ -28,6 +28,14 @@ $storageType = $_ENV['STORAGE_TYPE'] ?? 'file';
 $httpPort    = (int)($_ENV['HTTP_PORT'] ?? 8081);
 $wsPort      = (int)($_ENV['WS_PORT']   ?? 8080);
 $apiSecret   = $_ENV['API_SECRET'] ?? '';
+$uiSecret    = $_ENV['UI_SECRET']  ?? '';
+
+if (empty($apiSecret)) {
+    echo "[WARN] API_SECRET is not set — write endpoints are unprotected!\n";
+}
+if (empty($uiSecret)) {
+    echo "[WARN] UI_SECRET is not set — read endpoints are unprotected!\n";
+}
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
 
@@ -49,7 +57,7 @@ if ($storageType === 'mariadb') {
 // ─── WebSocket hub ────────────────────────────────────────────────────────────
 
 $loop = Loop::get();
-$hub  = new LogHub();
+$hub  = new LogHub($uiSecret);
 
 $wsSocket = new SocketServer("0.0.0.0:{$wsPort}", [], $loop);
 $wsServer = new IoServer(
@@ -60,7 +68,7 @@ $wsServer = new IoServer(
 
 // ─── HTTP API ─────────────────────────────────────────────────────────────────
 
-$router = new Router($storage, $hub, $apiSecret);
+$router = new Router($storage, $hub, $apiSecret, $uiSecret);
 
 $httpServer = new HttpServer(
     new RequestBodyBufferMiddleware(4 * 1024 * 1024), // 4 MB max body
@@ -84,6 +92,9 @@ echo "║           LogService started             ║\n";
 echo "╠══════════════════════════════════════════╣\n";
 echo "║  HTTP API  →  http://0.0.0.0:{$httpPort}       ║\n";
 echo "║  WebSocket →  ws://0.0.0.0:{$wsPort}          ║\n";
+echo "╠══════════════════════════════════════════╣\n";
+echo "║  Write key (API_SECRET)  : " . (empty($apiSecret) ? '⚠️  NOT SET' : '✅ set') . "          ║\n";
+echo "║  Read key  (UI_SECRET)   : " . (empty($uiSecret)  ? '⚠️  NOT SET' : '✅ set') . "          ║\n";
 echo "╚══════════════════════════════════════════╝\n\n";
 
 $loop->run();
