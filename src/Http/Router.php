@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LogService\Http;
 
+use LogService\Auth\WriteAuthInterface;
 use LogService\Models\LogEntry;
 use LogService\Storage\StorageInterface;
 use LogService\WebSocket\LogHub;
@@ -11,29 +12,28 @@ use Psr\Http\Message\ServerRequestInterface;
 use React\Http\Message\Response;
 
 /**
- * Minimal HTTP router for the log ingestion and query API.
+ * HTTP router for the log ingestion and query API.
  *
  * Authentication:
- *   POST /api/logs          → requires Bearer <API_SECRET>   (write key, for your apps)
- *   GET  /api/logs          → requires Bearer <UI_SECRET>    (read key,  for the UI)
- *   GET  /api/logs/{id}     → requires Bearer <UI_SECRET>
- *   GET  /api/health        → public (no auth required)
- *   OPTIONS *               → public (CORS preflight)
  *
- * Routes:
- *   POST   /api/logs          – ingest one or many log entries
- *   GET    /api/logs          – search / paginate logs
- *   GET    /api/logs/{id}     – fetch single entry by internal ID or trace_id
- *   GET    /api/health        – liveness probe
- *   OPTIONS *                 – CORS preflight
+ *   Write (POST /api/logs):
+ *     File storage   → Authorization: Bearer <API_SECRET>
+ *     MariaDB storage → X-Api-Key: <app_key>  +  X-Api-Token: <api_token>
+ *     Delegated to the injected WriteAuthInterface implementation.
+ *
+ *   Read (GET /api/logs, GET /api/logs/{id}):
+ *     Always: Authorization: Bearer <UI_SECRET>  (same for both storage modes)
+ *
+ *   Public (no auth):
+ *     GET /api/health, GET /docs, GET /, GET /openapi.yaml, OPTIONS *
  */
 final class Router
 {
     public function __construct(
-        private readonly StorageInterface $storage,
-        private readonly LogHub $hub,
-        private readonly string $apiSecret,
-        private readonly string $uiSecret,
+        private readonly StorageInterface  $storage,
+        private readonly LogHub            $hub,
+        private readonly WriteAuthInterface $writeAuth,
+        private readonly string            $uiSecret,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -42,47 +42,43 @@ final class Router
     {
         $method = $request->getMethod();
         $path   = rtrim($request->getUri()->getPath(), '/') ?: '/';
+        $cors   = $this->corsHeaders();
 
-        $cors = $this->corsHeaders();
-
-        // CORS preflight — always allow
         if ($method === 'OPTIONS') {
             return new Response(204, $cors);
         }
 
-        // Health check — public, no auth
         if ($method === 'GET' && $path === '/api/health') {
             return $this->handleHealth($cors);
         }
 
-        // Swagger UI — public, no auth
         if ($method === 'GET' && ($path === '/docs' || $path === '/')) {
             return $this->serveFile(__DIR__ . '/../../public/swagger-ui.html', 'text/html');
         }
 
-        // OpenAPI spec — public, no auth
         if ($method === 'GET' && $path === '/openapi.yaml') {
             return $this->serveFile(__DIR__ . '/../../public/openapi.yaml', 'application/yaml');
         }
 
-        // Write endpoints — require API_SECRET
+        // ── Write endpoint ────────────────────────────────────────────────────
         if ($method === 'POST' && $path === '/api/logs') {
-            if (!$this->isAuthorised($request, $this->apiSecret)) {
-                return $this->json(['error' => 'Unauthorized'], 401, $cors);
+            $authResult = $this->writeAuth->authenticate($request);
+            if (!$authResult->ok) {
+                return $this->json(['error' => 'Unauthorized', 'reason' => $authResult->reason], 401, $cors);
             }
-            return $this->handleIngest($request, $cors);
+            return $this->handleIngest($request, $cors, $authResult->appKey);
         }
 
-        // Read endpoints — require UI_SECRET
+        // ── Read endpoints ────────────────────────────────────────────────────
         if ($method === 'GET' && $path === '/api/logs') {
-            if (!$this->isAuthorised($request, $this->uiSecret)) {
+            if (!$this->isReadAuthorised($request)) {
                 return $this->json(['error' => 'Unauthorized'], 401, $cors);
             }
             return $this->handleSearch($request, $cors);
         }
 
         if ($method === 'GET' && preg_match('#^/api/logs/([^/]+)$#', $path, $m)) {
-            if (!$this->isAuthorised($request, $this->uiSecret)) {
+            if (!$this->isReadAuthorised($request)) {
                 return $this->json(['error' => 'Unauthorized'], 401, $cors);
             }
             return $this->handleGetById($m[1], $cors);
@@ -106,20 +102,35 @@ final class Router
 
     // ──────────────────────────────────────────────────────────────────────────
 
-    private function handleIngest(ServerRequestInterface $request, array $cors): Response
-    {
+    /**
+     * @param string|null $resolvedAppKey  The app_key surfaced by the auth strategy.
+     *                                     For DB auth this is the registered app_key;
+     *                                     for single-key auth it is '__single_key__'
+     *                                     and the body field takes precedence.
+     */
+    private function handleIngest(
+        ServerRequestInterface $request,
+        array $cors,
+        ?string $resolvedAppKey,
+    ): Response {
         $body = json_decode((string) $request->getBody(), true);
 
         if (!is_array($body)) {
             return $this->json(['error' => 'Invalid JSON body'], 400, $cors);
         }
 
-        $topAppKey    = $body['app_key']  ?? $request->getHeaderLine('X-App-Key')  ?: null;
+        // DB auth: the app_key from the clients table is the authoritative value.
+        // Single-key auth: fall back to body / X-App-Key header as before.
+        $isSingleKey  = ($resolvedAppKey === '__single_key__' || $resolvedAppKey === null);
+        $defaultAppKey = $isSingleKey
+            ? ($body['app_key'] ?? $request->getHeaderLine('X-App-Key') ?: null)
+            : $resolvedAppKey;
+
         $topAppId     = $body['app_id']   ?? $request->getHeaderLine('X-App-Id')   ?: null;
         $topUserAgent = $request->getHeaderLine('User-Agent') ?: ($body['user_agent'] ?? null);
         $topBatchId   = $body['batch_id'] ?? null;
 
-        if (!$topAppKey || !$topAppId) {
+        if (!$defaultAppKey || !$topAppId) {
             return $this->json(['error' => 'app_key and app_id are required'], 400, $cors);
         }
 
@@ -131,12 +142,18 @@ final class Router
         $errors = [];
 
         foreach ($rawLogs as $i => $raw) {
+            // For DB-authenticated requests, enforce the registered app_key —
+            // clients cannot spoof a different application's identity.
+            $entryAppKey = $isSingleKey
+                ? ($raw['app_key'] ?? $defaultAppKey)
+                : $resolvedAppKey;
+
             try {
                 $entry = LogEntry::fromArray([
                     'id'         => $this->ulid(),
                     'trace_id'   => $raw['trace_id']   ?? $this->uuid4(),
                     'batch_id'   => $raw['batch_id']   ?? $topBatchId,
-                    'app_key'    => $raw['app_key']    ?? $topAppKey,
+                    'app_key'    => $entryAppKey,
                     'app_id'     => $raw['app_id']     ?? $topAppId,
                     'user_agent' => $raw['user_agent'] ?? $topUserAgent,
                     'level'      => $raw['level']      ?? 'info',
@@ -186,9 +203,7 @@ final class Router
         $limit  = max(1, min((int)($q['limit']  ?? 100), 1000));
         $offset = max(0,          (int)($q['offset'] ?? 0));
 
-        $result = $this->storage->search($filters, $limit, $offset);
-
-        return $this->json($result, 200, $cors);
+        return $this->json($this->storage->search($filters, $limit, $offset), 200, $cors);
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -208,26 +223,20 @@ final class Router
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────
 
-    private function isAuthorised(ServerRequestInterface $request, string $secret): bool
+    /** Read-endpoint auth — always Bearer <UI_SECRET>, regardless of storage mode. */
+    private function isReadAuthorised(ServerRequestInterface $request): bool
     {
-        if (empty($secret)) {
-            return true; // Auth disabled — dev mode
+        if (empty($this->uiSecret)) {
+            return true;
         }
 
         $header = $request->getHeaderLine('Authorization');
-
-        // Bearer token in Authorization header
         if (str_starts_with($header, 'Bearer ')) {
-            return hash_equals($secret, substr($header, 7));
+            return hash_equals($this->uiSecret, substr($header, 7));
         }
 
-        // Fallback: token in query string (useful for quick curl tests)
         $token = $request->getQueryParams()['token'] ?? '';
-        if (!empty($token)) {
-            return hash_equals($secret, $token);
-        }
-
-        return false;
+        return $token !== '' && hash_equals($this->uiSecret, $token);
     }
 
     private function json(array $data, int $status, array $extra = []): Response
@@ -244,11 +253,10 @@ final class Router
         return [
             'Access-Control-Allow-Origin'  => '*',
             'Access-Control-Allow-Methods' => 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-App-Key, X-App-Id',
+            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Api-Key, X-Api-Token, X-App-Key, X-App-Id',
         ];
     }
 
-    /** Serve a static file from disk with the given Content-Type. */
     private function serveFile(string $path, string $contentType): Response
     {
         if (!file_exists($path) || !is_readable($path)) {

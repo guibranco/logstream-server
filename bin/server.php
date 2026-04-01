@@ -6,6 +6,8 @@ declare(strict_types=1);
 require __DIR__ . '/../vendor/autoload.php';
 
 use Dotenv\Dotenv;
+use LogService\Auth\DatabaseWriteAuth;
+use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Http\Router;
 use LogService\Storage\FileStorage;
 use LogService\Storage\MariaDBStorage;
@@ -30,28 +32,37 @@ $wsPort      = (int)($_ENV['WS_PORT']   ?? 8080);
 $apiSecret   = $_ENV['API_SECRET'] ?? '';
 $uiSecret    = $_ENV['UI_SECRET']  ?? '';
 
-if (empty($apiSecret)) {
-    echo "[WARN] API_SECRET is not set — write endpoints are unprotected!\n";
-}
-if (empty($uiSecret)) {
-    echo "[WARN] UI_SECRET is not set — read endpoints are unprotected!\n";
-}
-
-// ─── Storage ──────────────────────────────────────────────────────────────────
+// ─── Storage + Write Auth ─────────────────────────────────────────────────────
 
 if ($storageType === 'mariadb') {
-    $dsn     = sprintf(
+    $dsn  = sprintf(
         'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
         $_ENV['DB_HOST'] ?? '127.0.0.1',
         $_ENV['DB_PORT'] ?? '3306',
         $_ENV['DB_NAME'] ?? 'logservice',
     );
-    $storage = new MariaDBStorage($dsn, $_ENV['DB_USER'] ?? 'root', $_ENV['DB_PASS'] ?? '');
-    echo "[Storage] MariaDB ({$_ENV['DB_HOST']}:{$_ENV['DB_PORT']}/{$_ENV['DB_NAME']})\n";
+    $pdo = new PDO($dsn, $_ENV['DB_USER'] ?? 'root', $_ENV['DB_PASS'] ?? '', [
+        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES   => false,
+    ]);
+
+    $storage   = new MariaDBStorage($dsn, $_ENV['DB_USER'] ?? 'root', $_ENV['DB_PASS'] ?? '');
+    $writeAuth = new DatabaseWriteAuth($pdo);
+
+    $authMode = 'per-client (X-Api-Key / X-Api-Token  →  clients table)';
+    echo "[Storage]  MariaDB ({$_ENV['DB_HOST']}:{$_ENV['DB_PORT']}/{$_ENV['DB_NAME']})\n";
 } else {
-    $logPath = $_ENV['LOG_PATH'] ?? __DIR__ . '/../storage/logs';
-    $storage = new FileStorage($logPath);
-    echo "[Storage] File ({$logPath})\n";
+    $logPath   = $_ENV['LOG_PATH'] ?? __DIR__ . '/../storage/logs';
+    $storage   = new FileStorage($logPath);
+    $writeAuth = new SingleKeyWriteAuth($apiSecret);
+
+    $authMode = 'single key (Authorization: Bearer API_SECRET)';
+    echo "[Storage]  File ({$logPath})\n";
+}
+
+if (empty($uiSecret)) {
+    echo "[WARN]     UI_SECRET is not set — read endpoints are unprotected!\n";
 }
 
 // ─── WebSocket hub ────────────────────────────────────────────────────────────
@@ -68,10 +79,10 @@ $wsServer = new IoServer(
 
 // ─── HTTP API ─────────────────────────────────────────────────────────────────
 
-$router = new Router($storage, $hub, $apiSecret, $uiSecret);
+$router = new Router($storage, $hub, $writeAuth, $uiSecret);
 
 $httpServer = new HttpServer(
-    new RequestBodyBufferMiddleware(4 * 1024 * 1024), // 4 MB max body
+    new RequestBodyBufferMiddleware(4 * 1024 * 1024),
     new RequestBodyParserMiddleware(),
     function ($request) use ($router) {
         return $router->handle($request);
@@ -93,8 +104,8 @@ echo "╠═══════════════════════�
 echo "║  HTTP API  →  http://0.0.0.0:{$httpPort}       ║\n";
 echo "║  WebSocket →  ws://0.0.0.0:{$wsPort}          ║\n";
 echo "╠══════════════════════════════════════════╣\n";
-echo "║  Write key (API_SECRET)  : " . (empty($apiSecret) ? '⚠️  NOT SET' : '✅ set') . "          ║\n";
-echo "║  Read key  (UI_SECRET)   : " . (empty($uiSecret)  ? '⚠️  NOT SET' : '✅ set') . "          ║\n";
+echo "║  Write auth : {$authMode}\n";
+echo "║  Read key   : " . (empty($uiSecret) ? '⚠️  NOT SET' : '✅ set') . "\n";
 echo "╚══════════════════════════════════════════╝\n\n";
 
 $loop->run();

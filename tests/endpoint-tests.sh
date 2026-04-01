@@ -1,14 +1,36 @@
 #!/usr/bin/env bash
 # Tests/endpoint-tests.sh
 # Hits the live HTTP server and validates responses.
-# Usage: Tests/endpoint-tests.sh <base_url> <api_secret> <ui_secret>
-# Example: Tests/endpoint-tests.sh http://localhost:8081 my-write-secret my-read-secret
+#
+# Usage (single-key / file storage mode):
+#   Tests/endpoint-tests.sh <base_url> <api_secret> <ui_secret>
+#
+# Usage (per-client / MariaDB mode):
+#   Tests/endpoint-tests.sh <base_url> <ui_secret> "" \
+#       --db-auth <app_key> <api_token>
+#
+# Examples:
+#   Tests/endpoint-tests.sh http://localhost:8081 test-secret test-ui-secret
+#   Tests/endpoint-tests.sh http://localhost:8081 test-ui-secret "" \
+#       --db-auth endpoint-test test-token-123
 
 set -euo pipefail
 
 BASE_URL="${1:-http://localhost:8081}"
 API_SECRET="${2:-test-secret}"
 UI_SECRET="${3:-test-ui-secret}"
+
+# Per-client DB auth (optional)
+DB_AUTH_MODE=false
+DB_APP_KEY=""
+DB_API_TOKEN=""
+
+if [[ "${4:-}" == "--db-auth" ]]; then
+  DB_AUTH_MODE=true
+  DB_APP_KEY="${5:-}"
+  DB_API_TOKEN="${6:-}"
+fi
+
 PASS=0
 FAIL=0
 ERRORS=()
@@ -70,7 +92,7 @@ assert_json_field "health.status == ok" "ok" "$STATUS_VAL"
 
 header "Auth guards"
 
-# POST without API_SECRET → 401
+# POST without any credentials → 401
 RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
     -X POST "$BASE_URL/api/logs" \
     -H "Content-Type: application/json" \
@@ -91,14 +113,15 @@ RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
 
 assert_status "GET /api/logs with wrong token → 401" "401" "$RESPONSE"
 
-# POST with UI_SECRET on a write endpoint → 401 (wrong key for wrong endpoint)
-RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
-    -X POST "$BASE_URL/api/logs" \
-    -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $UI_SECRET" \
-    -d '{"app_key":"x","app_id":"y","message":"ui key on write"}')
-
-assert_status "POST /api/logs with UI_SECRET → 401" "401" "$RESPONSE"
+if ! $DB_AUTH_MODE; then
+  # Single-key mode: POST with UI_SECRET on the write endpoint → 401
+  RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+      -X POST "$BASE_URL/api/logs" \
+      -H "Content-Type: application/json" \
+      -H "Authorization: Bearer $UI_SECRET" \
+      -d '{"app_key":"x","app_id":"y","message":"ui key on write"}')
+  assert_status "POST /api/logs with UI_SECRET → 401" "401" "$RESPONSE"
+fi
 
 # ── 3. Ingest – single entry ──────────────────────────────────────────────────
 
@@ -116,10 +139,17 @@ INGEST_BODY=$(cat <<JSONEOF
 JSONEOF
 )
 
+# Build write-auth headers based on mode
+if $DB_AUTH_MODE; then
+  WRITE_AUTH_HEADERS=(-H "X-Api-Key: $DB_APP_KEY" -H "X-Api-Token: $DB_API_TOKEN")
+else
+  WRITE_AUTH_HEADERS=(-H "Authorization: Bearer $API_SECRET")
+fi
+
 RESPONSE=$(curl -s -o /tmp/ls_ingest_body.json -w "%{http_code}" \
     -X POST "$BASE_URL/api/logs" \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $API_SECRET" \
+    "${WRITE_AUTH_HEADERS[@]}" \
     -H "User-Agent: EndpointTest/1.0" \
     -d "$INGEST_BODY")
 
@@ -155,7 +185,7 @@ JSONEOF
 RESPONSE=$(curl -s -o /tmp/ls_batch_body.json -w "%{http_code}" \
     -X POST "$BASE_URL/api/logs" \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $API_SECRET" \
+    "${WRITE_AUTH_HEADERS[@]}" \
     -d "$BATCH_BODY")
 
 assert_status "POST /api/logs (batch of 3)" "201" "$RESPONSE"
