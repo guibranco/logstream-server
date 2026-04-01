@@ -5,21 +5,49 @@ info:
   description: |
     Real-time log ingestion and streaming service built with PHP 8.3 + ReactPHP + Ratchet.
 
-    ## Authentication
+    ## Storage modes and write authentication
 
-    The API uses two separate Bearer tokens:
+    The server operates in one of two storage modes, selected by the `STORAGE_TYPE`
+    environment variable. The write authentication scheme depends on the mode:
 
-    | Token | Header | Protects |
-    |-------|--------|---------|
-    | **Write key** (`API_SECRET`) | `Authorization: Bearer <API_SECRET>` | `POST /api/logs` |
-    | **Read key** (`UI_SECRET`) | `Authorization: Bearer <UI_SECRET>` | `GET /api/logs`, `GET /api/logs/{id}` |
+    ### File storage mode (`STORAGE_TYPE=file`)
 
-    The health endpoint is **public** — no token required.
+    All applications share a single write key defined in `.env` as `API_SECRET`.
+
+    | Role | Header | Value |
+    |------|--------|-------|
+    | Write | `Authorization` | `Bearer <API_SECRET>` |
+    | Read  | `Authorization` | `Bearer <UI_SECRET>` |
+
+    ### MariaDB storage mode (`STORAGE_TYPE=mariadb`)
+
+    Each application has its own row in the `clients` table with a unique
+    `app_key` / `api_token` pair. Both headers must be present on every write request.
+
+    | Role | Header | Value |
+    |------|--------|-------|
+    | Write | `X-Api-Key` | registered `app_key` |
+    | Write | `X-Api-Token` | registered `api_token` |
+    | Read  | `Authorization` | `Bearer <UI_SECRET>` |
+
+    > In MariaDB mode the `app_key` is **enforced from the clients table** — a
+    > client cannot spoof a different application's identity in the request body.
+
+    ## Read authentication (both modes)
+
+    `GET /api/logs` and `GET /api/logs/{id}` always require:
+    ```
+    Authorization: Bearer <UI_SECRET>
+    ```
 
     ## WebSocket
 
-    Connect to `ws://host:8080?token=<UI_SECRET>` (or `wss://` behind Nginx).
+    Connect to `wss://host/ws?token=<UI_SECRET>`.
     Every ingested log entry is broadcast in real-time to all connected clients.
+
+    ## Health check
+
+    `GET /api/health` is **public** — no authentication required.
   version: 1.0.0
   contact:
     name: guibranco
@@ -34,23 +62,47 @@ servers:
   - url: http://localhost:8081
     description: Local development
 
-# ── Security schemes ────────────────────────────────────────────────────────────
+# ── Security schemes ─────────────────────────────────────────────────────────
 components:
   securitySchemes:
 
+    # ── File storage mode ─────────────────────────────────────────────────────
     WriteKey:
       type: http
       scheme: bearer
-      description: >
-        Write key (`API_SECRET`). Required on `POST /api/logs`.
-        Used by your backend services to ingest log entries.
+      description: |
+        **File storage mode only.**
+        Single shared write key (`API_SECRET` from `.env`).
+        Send as `Authorization: Bearer <API_SECRET>`.
 
+    # ── MariaDB storage mode ──────────────────────────────────────────────────
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: |
+        **MariaDB storage mode only.**
+        The `app_key` of the registered client (from the `clients` table).
+        Must be sent together with `X-Api-Token`.
+
+    ApiToken:
+      type: apiKey
+      in: header
+      name: X-Api-Token
+      description: |
+        **MariaDB storage mode only.**
+        The `api_token` of the registered client (from the `clients` table).
+        Must be sent together with `X-Api-Key`.
+
+    # ── Both modes ────────────────────────────────────────────────────────────
     ReadKey:
       type: http
       scheme: bearer
-      description: >
-        Read key (`UI_SECRET`). Required on `GET /api/logs` and `GET /api/logs/{id}`.
-        Used by the dashboard UI and authorised humans.
+      description: |
+        **Both storage modes.**
+        Read-only key (`UI_SECRET` from `.env`).
+        Required on `GET /api/logs` and `GET /api/logs/{id}`.
+        Send as `Authorization: Bearer <UI_SECRET>`.
 
   # ── Reusable schemas ──────────────────────────────────────────────────────────
   schemas:
@@ -82,7 +134,10 @@ components:
         app_key:
           type: string
           maxLength: 100
-          description: Application slug identifying the source system.
+          description: >
+            Application slug identifying the source system.
+            In MariaDB mode this is enforced from the `clients` table and
+            cannot be overridden in the request body.
           example: billing-api
         app_id:
           type: string
@@ -128,6 +183,38 @@ components:
           description: When the server persisted the entry.
           example: "2025-01-15T14:22:00.012Z"
 
+    Client:
+      type: object
+      required: [id, name, app_key, active, created_at, updated_at]
+      description: A registered application client (MariaDB storage mode only).
+      properties:
+        id:
+          type: integer
+          description: Auto-increment internal identifier.
+          example: 1
+        name:
+          type: string
+          maxLength: 255
+          description: Human-readable display name for the application.
+          example: Billing API
+        app_key:
+          type: string
+          maxLength: 100
+          description: Unique key sent in `X-Api-Key` header.
+          example: billing-api
+        active:
+          type: boolean
+          description: Whether this client is allowed to ingest logs.
+          example: true
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-01-15T09:00:00.000Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2025-01-15T09:00:00.000Z"
+
     IngestEntry:
       type: object
       description: A single log entry submitted for ingestion.
@@ -136,27 +223,24 @@ components:
           type: string
           format: uuid
           description: Client-supplied trace ID. Auto-generated by server if omitted.
-          example: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
         batch_id:
           type: string
           format: uuid
           description: Overrides the top-level `batch_id` for this entry only.
-          example: 550e8400-e29b-41d4-a716-446655440000
         app_key:
           type: string
           maxLength: 100
-          description: Overrides the top-level `app_key` for this entry only.
-          example: billing-api
+          description: >
+            Only used in file storage mode. In MariaDB mode the `app_key`
+            from the `clients` table is always used regardless of this field.
         app_id:
           type: string
           maxLength: 100
           description: Overrides the top-level `app_id` for this entry only.
-          example: production
         user_agent:
           type: string
           maxLength: 255
           description: Overrides the `User-Agent` header for this entry only.
-          example: BillingService/2.1.0
         level:
           $ref: '#/components/schemas/LogLevel'
         category:
@@ -172,24 +256,25 @@ components:
           type: object
           nullable: true
           additionalProperties: true
-          description: Arbitrary structured metadata.
-          example:
-            invoice_id: 1234
-            code: card_declined
         timestamp:
           type: string
           format: date-time
           description: When the event occurred. Defaults to server receive time.
-          example: "2025-01-15T14:22:00.000Z"
 
     SingleIngestRequest:
       type: object
-      required: [app_key, app_id, message]
-      description: Ingest a single log entry.
+      required: [app_id, message]
+      description: |
+        Ingest a single log entry.
+
+        **File storage mode:** `app_key` is required in the body.
+        **MariaDB storage mode:** `app_key` is taken from the `clients` table
+        and does not need to be supplied.
       properties:
         app_key:
           type: string
           maxLength: 100
+          description: Required in file storage mode. Ignored in MariaDB mode.
           example: billing-api
         app_id:
           type: string
@@ -199,11 +284,9 @@ components:
           type: string
           format: uuid
           nullable: true
-          example: 550e8400-e29b-41d4-a716-446655440000
         user_agent:
           type: string
           maxLength: 255
-          example: BillingService/2.1.0
         level:
           $ref: '#/components/schemas/LogLevel'
         category:
@@ -223,20 +306,24 @@ components:
         timestamp:
           type: string
           format: date-time
-          example: "2025-01-15T14:22:00.000Z"
 
     BatchIngestRequest:
       type: object
-      required: [app_key, app_id, logs]
-      description: >
+      required: [app_id, logs]
+      description: |
         Ingest multiple log entries in one request.
-        `app_key`, `app_id`, and `batch_id` set at the top level are
-        inherited by every entry in the `logs` array unless overridden
-        per-entry.
+
+        **File storage mode:** `app_key` is required at the top level.
+        **MariaDB storage mode:** `app_key` is taken from the `clients` table;
+        the field is ignored even if supplied.
+
+        `app_id` and `batch_id` set at the top level are inherited by every
+        entry in the `logs` array unless overridden per-entry.
       properties:
         app_key:
           type: string
           maxLength: 100
+          description: Required in file storage mode. Ignored in MariaDB mode.
           example: billing-api
         app_id:
           type: string
@@ -246,7 +333,6 @@ components:
           type: string
           format: uuid
           nullable: true
-          example: 550e8400-e29b-41d4-a716-446655440000
         logs:
           type: array
           minItems: 1
@@ -279,15 +365,12 @@ components:
       properties:
         total:
           type: integer
-          description: Total number of entries matching the filters.
           example: 142
         limit:
           type: integer
-          description: The `limit` value that was applied.
           example: 100
         offset:
           type: integer
-          description: The `offset` value that was applied.
           example: 0
         entries:
           type: array
@@ -305,11 +388,9 @@ components:
         time:
           type: string
           format: date-time
-          description: Current server time.
           example: "2025-01-15T14:22:00+00:00"
         ws_connections:
           type: integer
-          description: Number of currently connected WebSocket clients.
           example: 2
 
     ErrorResponse:
@@ -319,6 +400,11 @@ components:
         error:
           type: string
           example: Unauthorized
+        reason:
+          type: string
+          nullable: true
+          description: Additional detail about why the request was rejected.
+          example: "Unknown client: my-app"
 
   # ── Reusable parameters ───────────────────────────────────────────────────────
   parameters:
@@ -326,26 +412,21 @@ components:
     AppKey:
       name: app_key
       in: query
-      schema:
-        type: string
-        maxLength: 100
+      schema: { type: string, maxLength: 100 }
       description: Filter by application slug (exact match).
       example: billing-api
 
     AppId:
       name: app_id
       in: query
-      schema:
-        type: string
-        maxLength: 100
+      schema: { type: string, maxLength: 100 }
       description: Filter by deployment environment or instance (exact match).
       example: production
 
     UserAgent:
       name: user_agent
       in: query
-      schema:
-        type: string
+      schema: { type: string }
       description: Filter by user agent string (partial match).
       example: BillingService
 
@@ -359,86 +440,94 @@ components:
     Category:
       name: category
       in: query
-      schema:
-        type: string
-        maxLength: 100
+      schema: { type: string, maxLength: 100 }
       description: Filter by category (partial match).
       example: payments
 
     TraceId:
       name: trace_id
       in: query
-      schema:
-        type: string
-        format: uuid
+      schema: { type: string, format: uuid }
       description: Filter by trace ID (exact match).
       example: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
 
     BatchId:
       name: batch_id
       in: query
-      schema:
-        type: string
-        format: uuid
+      schema: { type: string, format: uuid }
       description: Filter by batch ID (exact match).
       example: 550e8400-e29b-41d4-a716-446655440000
 
     DateFrom:
       name: date_from
       in: query
-      schema:
-        type: string
-        format: date-time
+      schema: { type: string, format: date-time }
       description: Return entries at or after this timestamp (ISO 8601, inclusive).
       example: "2025-01-01T00:00:00Z"
 
     DateTo:
       name: date_to
       in: query
-      schema:
-        type: string
-        format: date-time
+      schema: { type: string, format: date-time }
       description: Return entries at or before this timestamp (ISO 8601, inclusive).
       example: "2025-01-31T23:59:59Z"
 
     Search:
       name: search
       in: query
-      schema:
-        type: string
+      schema: { type: string }
       description: Substring match against the `message` field.
       example: "card declined"
 
     Limit:
       name: limit
       in: query
-      schema:
-        type: integer
-        minimum: 1
-        maximum: 1000
-        default: 100
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 100 }
       description: Maximum number of entries to return.
 
     Offset:
       name: offset
       in: query
-      schema:
-        type: integer
-        minimum: 0
-        default: 0
+      schema: { type: integer, minimum: 0, default: 0 }
       description: Number of entries to skip (for pagination).
 
   # ── Reusable responses ────────────────────────────────────────────────────────
   responses:
 
     Unauthorized:
-      description: Missing, invalid, or wrong-role Bearer token.
+      description: |
+        Missing, invalid, or wrong credentials.
+        The `reason` field in the response body gives a more specific explanation.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-          example:
-            error: Unauthorized
+          examples:
+            missingBearer:
+              summary: Missing Authorization header (file storage mode)
+              value:
+                error: Unauthorized
+                reason: Missing Authorization header or token query parameter
+            invalidBearer:
+              summary: Wrong API_SECRET (file storage mode)
+              value:
+                error: Unauthorized
+                reason: Invalid API secret
+            missingHeaders:
+              summary: Missing X-Api-Key / X-Api-Token (MariaDB mode)
+              value:
+                error: Unauthorized
+                reason: Missing X-Api-Key or X-Api-Token header
+            unknownClient:
+              summary: Unknown or inactive app_key (MariaDB mode)
+              value:
+                error: Unauthorized
+                reason: "Unknown client: my-app"
+            invalidToken:
+              summary: Wrong api_token (MariaDB mode)
+              value:
+                error: Unauthorized
+                reason: "Invalid token for client: billing-api"
 
     NotFound:
       description: No entry found for the supplied ID or trace_id.
@@ -458,7 +547,7 @@ components:
           example:
             error: app_key and app_id are required
 
-# ── Paths ──────────────────────────────────────────────────────────────────────
+# ── Paths ─────────────────────────────────────────────────────────────────────
 paths:
 
   /api/health:
@@ -490,15 +579,34 @@ paths:
 
         **Single entry** — include all fields at the top level.
 
-        **Batch** — set `app_key`, `app_id`, and optionally `batch_id` at the
-        top level and list entries under the `logs` array key. Top-level fields
-        are inherited by every entry unless overridden per-entry.
+        **Batch** — set `app_id` (and `app_key` if in file storage mode) at the
+        top level and list entries under the `logs` array key.
 
         The `User-Agent` header is captured automatically as the `user_agent`
         field of every entry in the request.
+
+        ---
+
+        ### Authentication — choose one scheme based on your storage mode:
+
+        **File storage (`STORAGE_TYPE=file`)**
+        ```
+        Authorization: Bearer <API_SECRET>
+        ```
+
+        **MariaDB storage (`STORAGE_TYPE=mariadb`)**
+        ```
+        X-Api-Key:   <app_key>
+        X-Api-Token: <api_token>
+        ```
+
+        > In MariaDB mode the `app_key` body field is **ignored** — the value
+        > from the `clients` table is always used to prevent identity spoofing.
       tags: [Logs]
       security:
         - WriteKey: []
+        - ApiKey: []
+          ApiToken: []
       requestBody:
         required: true
         content:
@@ -508,10 +616,21 @@ paths:
                 - $ref: '#/components/schemas/SingleIngestRequest'
                 - $ref: '#/components/schemas/BatchIngestRequest'
             examples:
-              single:
-                summary: Single entry
+              singleFileMode:
+                summary: "Single entry — file storage mode"
                 value:
                   app_key: billing-api
+                  app_id: production
+                  level: error
+                  category: payments
+                  message: Charge failed for invoice #1234
+                  context:
+                    invoice_id: 1234
+                    code: card_declined
+                  timestamp: "2025-01-15T14:22:00.000Z"
+              singleDbMode:
+                summary: "Single entry — MariaDB mode (app_key omitted)"
+                value:
                   app_id: production
                   level: error
                   category: payments
@@ -530,15 +649,11 @@ paths:
                     - level: info
                       category: payments
                       message: Charge initiated
-                      context:
-                        invoice_id: 1234
-                        amount: 99.00
+                      context: { invoice_id: 1234, amount: 99.00 }
                     - level: error
                       category: payments
                       message: Charge declined
-                      context:
-                        invoice_id: 1234
-                        code: card_declined
+                      context: { invoice_id: 1234, code: card_declined }
                     - level: warning
                       category: payments
                       message: Retry scheduled
@@ -561,9 +676,7 @@ paths:
                     level: error
                     category: payments
                     message: Charge failed for invoice #1234
-                    context:
-                      invoice_id: 1234
-                      code: card_declined
+                    context: { invoice_id: 1234, code: card_declined }
                     timestamp: "2025-01-15T14:22:00.000Z"
                     created_at: "2025-01-15T14:22:00.012Z"
                 errors: null
@@ -578,6 +691,8 @@ paths:
       description: |
         Search and paginate log entries. All filter parameters are optional
         and can be combined freely. Results are returned newest-first.
+
+        Requires `Authorization: Bearer <UI_SECRET>` in both storage modes.
       tags: [Logs]
       security:
         - ReadKey: []
@@ -615,9 +730,7 @@ paths:
                     level: error
                     category: payments
                     message: Charge failed for invoice #1234
-                    context:
-                      invoice_id: 1234
-                      code: card_declined
+                    context: { invoice_id: 1234, code: card_declined }
                     timestamp: "2025-01-15T14:22:00.000Z"
                     created_at: "2025-01-15T14:22:00.012Z"
         "401":
@@ -630,6 +743,7 @@ paths:
       description: >
         Fetch a single log entry by its internal ULID (`id`) or its
         `trace_id` UUID. Both formats are accepted in the path parameter.
+        Requires `Authorization: Bearer <UI_SECRET>` in both storage modes.
       tags: [Logs]
       security:
         - ReadKey: []
@@ -637,8 +751,7 @@ paths:
         - name: id
           in: path
           required: true
-          schema:
-            type: string
+          schema: { type: string }
           description: Internal ULID or `trace_id` UUID of the entry.
           example: 01HZ3XKPQ7V8WBNM0S4DECJRA
       responses:
@@ -653,9 +766,9 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
 
-# ── Tag descriptions ───────────────────────────────────────────────────────────
+# ── Tag descriptions ──────────────────────────────────────────────────────────
 tags:
   - name: Logs
-    description: Log ingestion and search.
+    description: Log ingestion and search (both storage modes).
   - name: System
     description: Health and diagnostics.
