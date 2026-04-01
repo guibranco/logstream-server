@@ -85,7 +85,7 @@ jobs:
 
       - name: 🐳 Build and start containers
         run: |
-          API_SECRET=test-secret UI_SECRET=test-ui-secret docker compose up -d --build
+          API_SECRET=test-secret UI_SECRET=test-ui-secret STORAGE_TYPE=file docker compose up -d --build
 
       - name: 🔧 Make scripts executable
         run: |
