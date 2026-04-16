@@ -175,77 +175,77 @@ jobs:
         run: rm -f ~/.ssh/deploy_key
 
   # ── 5. Database migrations ────────────────────────────────────────────────────
-  database_migrations:
-    name: 🗄️ Database Migrations
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      actions: write
-      contents: write
-    needs: [deploy]
+  # database_migrations:
+  #   name: 🗄️ Database Migrations
+  #   runs-on: ubuntu-latest
+  #   timeout-minutes: 20
+  #   permissions:
+  #     actions: write
+  #     contents: write
+  #   needs: [deploy]
 
-    steps:
-      - name: 📥 Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+  #   steps:
+  #     - name: 📥 Checkout code
+  #       uses: actions/checkout@v6
+  #       with:
+  #         fetch-depth: 0
 
-      - name: 🔍 Detect SQL changes
-        uses: dorny/paths-filter@v4
-        id: changes
-        with:
-          filters: |
-            sql:
-              - "migrations/**"
+  #     - name: 🔍 Detect SQL changes
+  #       uses: dorny/paths-filter@v4
+  #       id: changes
+  #       with:
+  #         filters: |
+  #           sql:
+  #             - "migrations/**"
 
-      - name: ⏭️ Skip if no SQL changes
-        if: steps.changes.outputs.sql == 'false'
-        run: echo "No migration changes — skipping."
+  #     - name: ⏭️ Skip if no SQL changes
+  #       if: steps.changes.outputs.sql == 'false'
+  #       run: echo "No migration changes — skipping."
 
-      - name: 🔐 Acquire WireGuard Connection Lock
-        uses: guibranco/github-artifact-lock-action@v3.0.22
-        with:
-          lock-name: wireguard-connection
+  #     - name: 🔐 Acquire WireGuard Connection Lock
+  #       uses: guibranco/github-artifact-lock-action@v3.0.22
+  #       with:
+  #         lock-name: wireguard-connection
 
-      - name: 🔌 Establish WireGuard VPN Connection
-        shell: bash
-        timeout-minutes: 5
-        run: |
-          echo "WIREGUARD_CONNECTED=true" >> $GITHUB_ENV
-          sudo apt-get update
-          sudo apt-get install -y wireguard wireguard-tools resolvconf
-          echo "${{ secrets.WIREGUARD_CONFIG }}" > wg0.conf
-          sudo chmod 600 wg0.conf
-          sudo modprobe wireguard
-          sudo wg-quick up ./wg0.conf
+  #     - name: 🔌 Establish WireGuard VPN Connection
+  #       shell: bash
+  #       timeout-minutes: 5
+  #       run: |
+  #         echo "WIREGUARD_CONNECTED=true" >> $GITHUB_ENV
+  #         sudo apt-get update
+  #         sudo apt-get install -y wireguard wireguard-tools resolvconf
+  #         echo "${{ secrets.WIREGUARD_CONFIG }}" > wg0.conf
+  #         sudo chmod 600 wg0.conf
+  #         sudo modprobe wireguard
+  #         sudo wg-quick up ./wg0.conf
 
-      - name: 🔍 Check for Schema Version Table
-        timeout-minutes: 5
-        id: new_installation
-        env:
-          MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD_MIGRATION }}
-        run: |
-          chmod +x Tools/db-check.sh
-          Tools/db-check.sh "${{ secrets.MYSQL_SERVER }}" "${{ secrets.MYSQL_USER_MIGRATION }}" "${{ secrets.MYSQL_DATABASE }}"
+  #     - name: 🔍 Check for Schema Version Table
+  #       timeout-minutes: 5
+  #       id: new_installation
+  #       env:
+  #         MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD_MIGRATION }}
+  #       run: |
+  #         chmod +x Tools/db-check.sh
+  #         Tools/db-check.sh "${{ secrets.MYSQL_SERVER }}" "${{ secrets.MYSQL_USER_MIGRATION }}" "${{ secrets.MYSQL_DATABASE }}"
 
-      - name: 🔄 Execute Database Migration Scripts
-        timeout-minutes: 10
-        env:
-          MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD_MIGRATION }}
-        run: |
-          chmod +x Tools/db-migration.sh
-          Tools/db-migration.sh Sql "${{ secrets.MYSQL_SERVER }}" "${{ secrets.MYSQL_USER_MIGRATION }}" "${{ secrets.MYSQL_DATABASE }}"
+  #     - name: 🔄 Execute Database Migration Scripts
+  #       timeout-minutes: 10
+  #       env:
+  #         MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD_MIGRATION }}
+  #       run: |
+  #         chmod +x Tools/db-migration.sh
+  #         Tools/db-migration.sh Sql "${{ secrets.MYSQL_SERVER }}" "${{ secrets.MYSQL_USER_MIGRATION }}" "${{ secrets.MYSQL_DATABASE }}"
 
-      - name: 🔌 Disconnect WireGuard VPN
-        if: always()
-        shell: bash
-        run: sudo wg-quick down ./wg0.conf
+  #     - name: 🔌 Disconnect WireGuard VPN
+  #       if: always()
+  #       shell: bash
+  #       run: sudo wg-quick down ./wg0.conf
 
-      - name: 🔓 Release WireGuard Connection Lock
-        if: always()
-        uses: guibranco/github-artifact-lock-action/release-lock@v3.0.22
-        with:
-          lock-name: wireguard-connection
+  #     - name: 🔓 Release WireGuard Connection Lock
+  #       if: always()
+  #       uses: guibranco/github-artifact-lock-action/release-lock@v3.0.22
+  #       with:
+  #         lock-name: wireguard-connection
 
   # ── 6. GitHub Release ─────────────────────────────────────────────────────────
   create_release:
