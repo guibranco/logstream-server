@@ -11,6 +11,10 @@ jobs:
     name: 🧪 Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: write
 
     steps:
       - name: 📥 Checkout code
@@ -76,6 +80,10 @@ jobs:
     name: 🔌 Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: write
 
     steps:
       - name: 📥 Checkout code
