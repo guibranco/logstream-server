@@ -254,7 +254,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
-    needs: [version, deploy, database_migrations]
+    needs: [version, deploy] #, database_migrations]
 
     steps:
       - name: 🏷️ Create release
