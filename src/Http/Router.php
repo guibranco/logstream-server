@@ -56,6 +56,10 @@ final class Router
             return $this->serveFile(__DIR__ . '/../../public/swagger-ui.html', 'text/html');
         }
 
+         if ($method === 'GET' && $path === '/favicon.ico') {
+            return $this->serveFile(__DIR__ . '/../../public/favicon.ico', 'image/x-icon');
+        }
+
         if ($method === 'GET' && $path === '/openapi.yaml') {
             return $this->serveFile(__DIR__ . '/../../public/openapi.yaml', 'application/yaml');
         }
