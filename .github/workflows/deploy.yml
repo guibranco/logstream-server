@@ -132,10 +132,10 @@ jobs:
               --no-progress
 
             echo "🏷️  Injecting version ${{ needs.version.outputs.fullSemVer }}..."
-            if grep -q '^APP_VERSION=' /opt/logstream-server/.env 2>/dev/null; then
-              sed -i "s|^APP_VERSION=.*|APP_VERSION=${{ needs.version.outputs.fullSemVer }}|" /opt/logstream-server/.env
+            if sudo -u logstream grep -q '^APP_VERSION=' /opt/logstream-server/.env 2>/dev/null; then
+              sudo -u logstream sed -i "s|^APP_VERSION=.*|APP_VERSION=${{ needs.version.outputs.fullSemVer }}|" /opt/logstream-server/.env
             else
-              echo "APP_VERSION=${{ needs.version.outputs.fullSemVer }}" >> /opt/logstream-server/.env
+              echo "APP_VERSION=${{ needs.version.outputs.fullSemVer }}" | sudo -u logstream tee -a /opt/logstream-server/.env > /dev/null
             fi
 
             echo "🔍 Verifying public/ directory..."
