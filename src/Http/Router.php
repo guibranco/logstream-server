@@ -6,6 +6,8 @@ namespace LogService\Http;
 
 use LogService\Auth\WriteAuthInterface;
 use LogService\Models\LogEntry;
+use LogService\Retention\RetentionEngine;
+use LogService\Retention\RetentionResult;
 use LogService\Storage\StorageInterface;
 use LogService\WebSocket\LogHub;
 use Psr\Http\Message\ServerRequestInterface;
@@ -30,11 +32,12 @@ use React\Http\Message\Response;
 final class Router
 {
     public function __construct(
-        private readonly StorageInterface  $storage,
-        private readonly LogHub            $hub,
+        private readonly StorageInterface   $storage,
+        private readonly LogHub             $hub,
         private readonly WriteAuthInterface $writeAuth,
-        private readonly string            $uiSecret,
-        private readonly string            $version = 'dev',
+        private readonly string             $uiSecret,
+        private readonly string             $version         = 'dev',
+        private readonly ?RetentionEngine   $retentionEngine = null,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -51,6 +54,13 @@ final class Router
 
         if ($method === 'GET' && $path === '/api/health') {
             return $this->handleHealth($cors);
+        }
+
+        if ($method === 'POST' && $path === '/api/retention/run') {
+            if (!$this->isReadAuthorised($request)) {
+                return $this->json(['error' => 'Unauthorized'], 401, $cors);
+            }
+            return $this->handleRetention($cors);
         }
 
         if ($method === 'GET' && ($path === '/docs' || $path === '/')) {
@@ -102,6 +112,24 @@ final class Router
             'status'         => 'ok',
             'time'           => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339),
             'ws_connections' => $this->hub->getConnectionCount(),
+        ], 200, $cors);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private function handleRetention(array $cors): Response
+    {
+        if ($this->retentionEngine === null) {
+            return $this->json(['error' => 'Retention is not configured'], 503, $cors);
+        }
+
+        $results     = $this->retentionEngine->run();
+        $totalPruned = array_sum(array_map(fn(RetentionResult $r) => $r->pruned, $results));
+
+        return $this->json([
+            'ran_at'       => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339),
+            'policies'     => array_map(fn(RetentionResult $r) => $r->toArray(), $results),
+            'total_pruned' => $totalPruned,
         ], 200, $cors);
     }
 
