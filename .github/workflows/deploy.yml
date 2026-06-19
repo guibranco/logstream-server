@@ -131,6 +131,13 @@ jobs:
               --no-interaction \
               --no-progress
 
+            echo "🏷️  Injecting version ${{ needs.version.outputs.fullSemVer }}..."
+            if grep -q '^APP_VERSION=' /opt/logstream-server/.env 2>/dev/null; then
+              sed -i "s|^APP_VERSION=.*|APP_VERSION=${{ needs.version.outputs.fullSemVer }}|" /opt/logstream-server/.env
+            else
+              echo "APP_VERSION=${{ needs.version.outputs.fullSemVer }}" >> /opt/logstream-server/.env
+            fi
+
             echo "🔍 Verifying public/ directory..."
             if [ -d "public" ]; then
               echo "✅ public/ is present:"

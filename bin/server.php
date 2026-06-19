@@ -29,8 +29,9 @@ $dotenv->safeLoad();
 $storageType = $_ENV['STORAGE_TYPE'] ?? 'file';
 $httpPort    = (int)($_ENV['HTTP_PORT'] ?? 8081);
 $wsPort      = (int)($_ENV['WS_PORT']   ?? 8080);
-$apiSecret   = $_ENV['API_SECRET'] ?? '';
-$uiSecret    = $_ENV['UI_SECRET']  ?? '';
+$apiSecret   = $_ENV['API_SECRET']   ?? '';
+$uiSecret    = $_ENV['UI_SECRET']    ?? '';
+$appVersion  = $_ENV['APP_VERSION']  ?? 'dev';
 
 // ─── Storage + Write Auth ─────────────────────────────────────────────────────
 
@@ -79,7 +80,7 @@ $wsServer = new IoServer(
 
 // ─── HTTP API ─────────────────────────────────────────────────────────────────
 
-$router = new Router($storage, $hub, $writeAuth, $uiSecret);
+$router = new Router($storage, $hub, $writeAuth, $uiSecret, $appVersion);
 
 $httpServer = new HttpServer(
     new RequestBodyBufferMiddleware(4 * 1024 * 1024),

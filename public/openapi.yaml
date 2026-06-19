@@ -48,7 +48,7 @@ info:
     ## Health check
 
     `GET /api/health` is **public** — no authentication required.
-  version: 1.0.0
+  version: '{{APP_VERSION}}'
   contact:
     name: guibranco
     url: https://github.com/guibranco/logstream-server

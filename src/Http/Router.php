@@ -34,6 +34,7 @@ final class Router
         private readonly LogHub            $hub,
         private readonly WriteAuthInterface $writeAuth,
         private readonly string            $uiSecret,
+        private readonly string            $version = 'dev',
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -53,7 +54,7 @@ final class Router
         }
 
         if ($method === 'GET' && ($path === '/docs' || $path === '/')) {
-            return $this->serveFile(__DIR__ . '/../../public/swagger-ui.html', 'text/html');
+            return $this->serveTemplate(__DIR__ . '/../../public/swagger-ui.html', 'text/html');
         }
 
          if ($method === 'GET' && $path === '/favicon.ico') {
@@ -61,7 +62,7 @@ final class Router
         }
 
         if ($method === 'GET' && $path === '/openapi.yaml') {
-            return $this->serveFile(__DIR__ . '/../../public/openapi.yaml', 'application/yaml');
+            return $this->serveTemplate(__DIR__ . '/../../public/openapi.yaml', 'application/yaml');
         }
 
         // ── Write endpoint ────────────────────────────────────────────────────
@@ -271,6 +272,20 @@ final class Router
             'Content-Type'  => $contentType . '; charset=utf-8',
             'Cache-Control' => 'no-cache',
         ], file_get_contents($path));
+    }
+
+    private function serveTemplate(string $path, string $contentType): Response
+    {
+        if (!file_exists($path) || !is_readable($path)) {
+            return $this->json(['error' => 'Not found'], 404);
+        }
+
+        $content = str_replace('{{APP_VERSION}}', $this->version, file_get_contents($path));
+
+        return new Response(200, [
+            'Content-Type'  => $contentType . '; charset=utf-8',
+            'Cache-Control' => 'no-cache',
+        ], $content);
     }
 
     // ─── ID generators ────────────────────────────────────────────────────────
