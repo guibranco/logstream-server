@@ -406,6 +406,42 @@ components:
           description: Additional detail about why the request was rejected.
           example: "Unknown client: my-app"
 
+    RetentionPolicyResult:
+      type: object
+      required: [policy, pruned]
+      properties:
+        policy:
+          type: string
+          description: Name of the retention policy that was executed.
+          example: remove-debug-7d
+        pruned:
+          type: integer
+          description: Number of log entries removed by this policy.
+          example: 42
+        error:
+          type: string
+          nullable: true
+          description: Error message if this policy failed to execute.
+          example: null
+
+    RetentionRunResponse:
+      type: object
+      required: [ran_at, policies, total_pruned]
+      properties:
+        ran_at:
+          type: string
+          format: date-time
+          description: Timestamp when the retention run started.
+          example: "2025-01-15T14:22:00+00:00"
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetentionPolicyResult'
+        total_pruned:
+          type: integer
+          description: Total number of log entries removed across all policies.
+          example: 156
+
   # ── Reusable parameters ───────────────────────────────────────────────────────
   parameters:
 
@@ -766,9 +802,51 @@ paths:
         "404":
           $ref: '#/components/responses/NotFound'
 
+  /api/retention/run:
+    post:
+      operationId: runRetention
+      summary: Run retention policies
+      description: |
+        Manually trigger execution of all configured retention policies.
+        Each policy is evaluated in order and matching log entries are deleted.
+
+        Requires `Authorization: Bearer <UI_SECRET>` (same credential used for
+        read endpoints).
+
+        Returns `503` when retention is not configured on this server instance
+        (i.e. `RETENTION_CONFIG` is not set or points to a disabled config).
+      tags: [System]
+      security:
+        - ReadKey: []
+      responses:
+        "200":
+          description: Retention policies ran successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionRunResponse'
+              example:
+                ran_at: "2025-01-15T14:22:00+00:00"
+                policies:
+                  - policy: remove-debug-7d
+                    pruned: 42
+                  - policy: remove-all-90d
+                    pruned: 114
+                total_pruned: 156
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "503":
+          description: Retention is not configured on this server instance.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: Retention is not configured
+
 # ── Tag descriptions ──────────────────────────────────────────────────────────
 tags:
   - name: Logs
     description: Log ingestion and search (both storage modes).
   - name: System
-    description: Health and diagnostics.
+    description: Health, diagnostics, and maintenance operations.

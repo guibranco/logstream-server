@@ -9,6 +9,10 @@ use Dotenv\Dotenv;
 use LogService\Auth\DatabaseWriteAuth;
 use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Http\Router;
+use LogService\Retention\DatabasePruner;
+use LogService\Retention\FileStoragePruner;
+use LogService\Retention\RetentionConfig;
+use LogService\Retention\RetentionEngine;
 use LogService\Storage\FileStorage;
 use LogService\Storage\MariaDBStorage;
 use LogService\WebSocket\LogHub;
@@ -66,6 +70,35 @@ if (empty($uiSecret)) {
     echo "[WARN]     UI_SECRET is not set — read endpoints are unprotected!\n";
 }
 
+// ─── Retention ────────────────────────────────────────────────────────────────
+
+$retentionEngine = null;
+$retentionConfig = RetentionConfig::disabled();
+
+$retentionConfigPath = $_ENV['RETENTION_CONFIG'] ?? null;
+if ($retentionConfigPath !== null) {
+    if (!str_starts_with($retentionConfigPath, '/') && !preg_match('#^[A-Za-z]:[/\\\\]#', $retentionConfigPath)) {
+        $retentionConfigPath = __DIR__ . '/../' . ltrim($retentionConfigPath, './\\');
+    }
+    try {
+        $retentionConfig = RetentionConfig::fromFile($retentionConfigPath);
+    } catch (\Throwable $e) {
+        echo "[WARN]     Retention config error: " . $e->getMessage() . "\n";
+    }
+}
+
+if ($retentionConfig->enabled) {
+    $retentionPruner = ($storageType === 'mariadb')
+        ? new DatabasePruner($pdo)
+        : new FileStoragePruner($logPath ?? (__DIR__ . '/../storage/logs'));
+    $retentionEngine = new RetentionEngine($retentionPruner, $retentionConfig);
+    echo "[Retention] Enabled — " . count($retentionConfig->policies) . " polic"
+        . (count($retentionConfig->policies) === 1 ? 'y' : 'ies')
+        . ", interval: {$retentionConfig->intervalHours}h\n";
+} else {
+    echo "[Retention] Disabled\n";
+}
+
 // ─── WebSocket hub ────────────────────────────────────────────────────────────
 
 $loop = Loop::get();
@@ -80,7 +113,7 @@ $wsServer = new IoServer(
 
 // ─── HTTP API ─────────────────────────────────────────────────────────────────
 
-$router = new Router($storage, $hub, $writeAuth, $uiSecret, $appVersion);
+$router = new Router($storage, $hub, $writeAuth, $uiSecret, $appVersion, $retentionEngine);
 
 $httpServer = new HttpServer(
     new RequestBodyBufferMiddleware(4 * 1024 * 1024),
@@ -108,5 +141,33 @@ echo "╠═══════════════════════�
 echo "║  Write auth : {$authMode}\n";
 echo "║  Read key   : " . (empty($uiSecret) ? '⚠️  NOT SET' : '✅ set') . "\n";
 echo "╚══════════════════════════════════════════╝\n\n";
+
+ // ─── Retention periodic timer ─────────────────────────────────────────────────
+
+if ($retentionEngine !== null) {
+    // Guard against zero or very small intervals to avoid a tight periodic loop.
+    // Enforce a minimum of 1 hour between runs.
+    $retentionIntervalHours = max(1, (int) $retentionConfig->intervalHours);
+
+    if ($retentionIntervalHours !== (int) $retentionConfig->intervalHours) {
+        echo "[Retention] interval_hours={$retentionConfig->intervalHours} is too small; clamping to {$retentionIntervalHours} hour(s).\n";
+    }
+
+    $retentionIntervalSeconds = $retentionIntervalHours * 3600;
+
+    $loop->addPeriodicTimer($retentionIntervalSeconds, function () use ($retentionEngine) {
+        echo '[Retention] Running scheduled policies...' . "\n";
+        $results     = $retentionEngine->run();
+        $totalPruned = array_sum(array_map(fn($r) => $r->pruned, $results));
+        foreach ($results as $r) {
+            $line = "[Retention] Policy '{$r->policy}': {$r->pruned} pruned";
+            if ($r->error !== null) {
+                $line .= " (ERROR: {$r->error})";
+            }
+            echo $line . "\n";
+        }
+        echo "[Retention] Done — {$totalPruned} entries pruned.\n";
+    });
+}
 
 $loop->run();

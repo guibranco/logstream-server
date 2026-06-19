@@ -1,0 +1,36 @@
+{
+  "enabled": true,
+  "interval_hours": 24,
+  "policies": [
+    {
+      "name": "remove-debug-7d",
+      "level": "debug",
+      "older_than_days": 7
+    },
+    {
+      "name": "remove-all-90d",
+      "older_than_days": 90
+    },
+    {
+      "name": "remove-production-info-30d",
+      "app_id": "production",
+      "level": "info",
+      "older_than_days": 30
+    },
+    {
+      "name": "remove-test-app-30d",
+      "app_key": "test-app",
+      "older_than_days": 30
+    },
+    {
+      "name": "remove-pii-email-regex-1d",
+      "message_regex": "[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}",
+      "older_than_days": 1
+    },
+    {
+      "name": "remove-hotmail-glob-30d",
+      "message_glob": "*@hotmail.com*",
+      "older_than_days": 30
+    }
+  ]
+}
