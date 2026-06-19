@@ -142,10 +142,19 @@ echo "║  Write auth : {$authMode}\n";
 echo "║  Read key   : " . (empty($uiSecret) ? '⚠️  NOT SET' : '✅ set') . "\n";
 echo "╚══════════════════════════════════════════╝\n\n";
 
-// ─── Retention periodic timer ─────────────────────────────────────────────────
+ // ─── Retention periodic timer ─────────────────────────────────────────────────
 
 if ($retentionEngine !== null) {
-    $retentionIntervalSeconds = $retentionConfig->intervalHours * 3600;
+    // Guard against zero or very small intervals to avoid a tight periodic loop.
+    // Enforce a minimum of 1 hour between runs.
+    $retentionIntervalHours = max(1, (int) $retentionConfig->intervalHours);
+
+    if ($retentionIntervalHours !== (int) $retentionConfig->intervalHours) {
+        echo "[Retention] interval_hours={$retentionConfig->intervalHours} is too small; clamping to {$retentionIntervalHours} hour(s).\n";
+    }
+
+    $retentionIntervalSeconds = $retentionIntervalHours * 3600;
+
     $loop->addPeriodicTimer($retentionIntervalSeconds, function () use ($retentionEngine) {
         echo '[Retention] Running scheduled policies...' . "\n";
         $results     = $retentionEngine->run();
