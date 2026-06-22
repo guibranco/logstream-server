@@ -122,6 +122,7 @@ jobs:
 
             echo "📥 Pulling latest code..."
             cd /opt/logstream-server
+            sudo -u logstream git clean -f composer.lock
             sudo -u logstream git pull origin main
 
             echo "📦 Installing dependencies..."
