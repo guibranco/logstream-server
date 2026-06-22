@@ -101,7 +101,7 @@ if ($retentionConfig->isEnabled()) {
         );
     }
 
-    $retentionRunner = new RetentionRunner($retentionEngine, $retentionConfig);
+    $retentionRunner = new RetentionRunner($retentionEngine, $retentionConfig, $policyRepository);
 
     $policyCount = count($retentionConfig->getPolicies());
     echo "[Retention] Enabled — {$policyCount} polic"

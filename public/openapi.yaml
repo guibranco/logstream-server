@@ -1019,6 +1019,8 @@ paths:
         Manually trigger execution of all configured retention policies.
         Each policy is evaluated in order and matching log entries are deleted.
 
+        Pass `?dry_run=true` to count what would be deleted without removing anything.
+
         Returns `503` when retention is not configured on this server instance
         (i.e. `RETENTION_CONFIG` is not set or points to a disabled config).
 
@@ -1026,6 +1028,11 @@ paths:
       tags: [Retention]
       security:
         - ReadKey: []
+      parameters:
+        - name: dry_run
+          in: query
+          schema: { type: boolean, default: false }
+          description: When `true`, count matching entries without deleting them.
       responses:
         "200":
           description: Retention policies ran successfully.
@@ -1227,9 +1234,11 @@ paths:
     post:
       operationId: runRetentionPolicy
       summary: Run a single retention policy
-      description: >
+      description: |
         Manually triggers execution of one named retention policy.
         Returns `404` if no policy with the given name exists.
+
+        Pass `?dry_run=true` to count what would be deleted without removing anything.
 
         Requires `Authorization: Bearer <UI_SECRET>`.
       tags: [Retention]
@@ -1237,6 +1246,10 @@ paths:
         - ReadKey: []
       parameters:
         - $ref: '#/components/parameters/PolicyName'
+        - name: dry_run
+          in: query
+          schema: { type: boolean, default: false }
+          description: When `true`, count matching entries without deleting them.
       responses:
         "200":
           description: Policy ran successfully.

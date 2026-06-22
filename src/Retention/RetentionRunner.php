@@ -7,16 +7,21 @@ namespace LogService\Retention;
 final class RetentionRunner
 {
     public function __construct(
-        private readonly RetentionEngineInterface $engine,
-        private readonly RetentionConfig          $config,
+        private readonly RetentionEngineInterface            $engine,
+        private readonly RetentionConfig                     $config,
+        private readonly ?RetentionPolicyRepositoryInterface $repository = null,
     ) {}
 
     /** @return RetentionResult[] */
     public function runAll(bool $dryRun = false): array
     {
+        $policies = $this->repository !== null
+            ? $this->repository->all()
+            : $this->config->getPolicies();
+
         $results = [];
 
-        foreach ($this->config->getPolicies() as $policy) {
+        foreach ($policies as $policy) {
             try {
                 $results[] = $this->engine->purge($policy, $dryRun);
             } catch (\Throwable $e) {
@@ -35,7 +40,9 @@ final class RetentionRunner
 
     public function runPolicy(string $name, bool $dryRun = false): RetentionResult
     {
-        $policy = $this->config->getPolicy($name);
+        $policy = $this->repository !== null
+            ? $this->repository->find($name)
+            : $this->config->getPolicy($name);
 
         if ($policy === null) {
             throw new \InvalidArgumentException("Retention policy '{$name}' not found.");
@@ -47,6 +54,8 @@ final class RetentionRunner
     /** @return RetentionPolicy[] */
     public function listPolicies(): array
     {
-        return $this->config->getPolicies();
+        return $this->repository !== null
+            ? $this->repository->all()
+            : $this->config->getPolicies();
     }
 }
