@@ -7,6 +7,7 @@ namespace LogService\Tests\Unit\Retention;
 use LogService\Retention\RetentionConfig;
 use LogService\Retention\RetentionEngineInterface;
 use LogService\Retention\RetentionPolicy;
+use LogService\Retention\RetentionPolicyRepositoryInterface;
 use LogService\Retention\RetentionResult;
 use LogService\Retention\RetentionRunner;
 use PHPUnit\Framework\Attributes\Test;
@@ -176,5 +177,87 @@ final class RetentionRunnerTest extends TestCase
         self::assertCount(2, $polices);
         self::assertSame('alpha', $polices[0]->name);
         self::assertSame('beta', $polices[1]->name);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Repository-driven behaviour (policy created after server start)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    #[Test]
+    public function run_all_uses_repository_policies_when_repository_is_provided(): void
+    {
+        $config = RetentionConfig::fromArray(['enabled' => true, 'policies' => []]);
+
+        $livePolicy = RetentionPolicy::fromArray(['name' => 'live', 'older_than_days' => 1]);
+
+        $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);
+        $repo->method('all')->willReturn([$livePolicy]);
+
+        $engine = $this->createMock(RetentionEngineInterface::class);
+        $engine->expects(self::once())
+            ->method('purge')
+            ->with(self::callback(fn(RetentionPolicy $p) => $p->name === 'live'), false)
+            ->willReturn(new RetentionResult(policy: 'live', pruned: 5));
+
+        $results = (new RetentionRunner($engine, $config, $repo))->runAll();
+
+        self::assertCount(1, $results);
+        self::assertSame('live', $results[0]->policy);
+    }
+
+    #[Test]
+    public function run_policy_resolves_via_repository(): void
+    {
+        $config = RetentionConfig::fromArray(['enabled' => true, 'policies' => []]);
+
+        $livePolicy = RetentionPolicy::fromArray(['name' => 'live', 'older_than_days' => 1]);
+
+        $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);
+        $repo->method('find')->with('live')->willReturn($livePolicy);
+
+        $engine = $this->createMock(RetentionEngineInterface::class);
+        $engine->expects(self::once())
+            ->method('purge')
+            ->willReturn(new RetentionResult(policy: 'live', pruned: 3));
+
+        $result = (new RetentionRunner($engine, $config, $repo))->runPolicy('live');
+
+        self::assertSame('live', $result->policy);
+        self::assertSame(3, $result->pruned);
+    }
+
+    #[Test]
+    public function run_policy_throws_when_repository_returns_null(): void
+    {
+        $config = RetentionConfig::fromArray(['enabled' => true, 'policies' => []]);
+
+        $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);
+        $repo->method('find')->willReturn(null);
+
+        $engine = $this->createMock(RetentionEngineInterface::class);
+        $engine->expects(self::never())->method('purge');
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        (new RetentionRunner($engine, $config, $repo))->runPolicy('ghost');
+    }
+
+    #[Test]
+    public function list_policies_uses_repository_when_provided(): void
+    {
+        $config = RetentionConfig::fromArray(['enabled' => true, 'policies' => [
+            ['name' => 'stale', 'older_than_days' => 90],
+        ]]);
+
+        $livePolicy = RetentionPolicy::fromArray(['name' => 'live', 'older_than_days' => 1]);
+
+        $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);
+        $repo->method('all')->willReturn([$livePolicy]);
+
+        $engine   = $this->createMock(RetentionEngineInterface::class);
+        $policies = (new RetentionRunner($engine, $config, $repo))->listPolicies();
+
+        self::assertCount(1, $policies);
+        self::assertSame('live', $policies[0]->name);
     }
 }

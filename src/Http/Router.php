@@ -123,7 +123,7 @@ final class Router
     ): Response {
         // POST /api/retention/run — run all policies
         if ($method === 'POST' && $path === '/api/retention/run') {
-            return $this->handleRetentionRun(null, $cors);
+            return $this->handleRetentionRun(null, $request, $cors);
         }
 
         // GET /api/retention/policies — list policies
@@ -153,7 +153,7 @@ final class Router
 
         // POST /api/retention/policies/{name}/run — run specific policy
         if ($method === 'POST' && preg_match('#^/api/retention/policies/([^/]+)/run$#', $path, $m)) {
-            return $this->handleRetentionRun($m[1], $cors);
+            return $this->handleRetentionRun($m[1], $request, $cors);
         }
 
         return $this->json(['error' => 'Not found'], 404, $cors);
@@ -163,17 +163,20 @@ final class Router
     // Retention handlers
     // ──────────────────────────────────────────────────────────────────────────
 
-    private function handleRetentionRun(?string $policyName, array $cors): Response
+    private function handleRetentionRun(?string $policyName, ServerRequestInterface $request, array $cors): Response
     {
         if ($this->retentionRunner === null) {
             return $this->json(['error' => 'Retention is not configured'], 503, $cors);
         }
 
+        $params = $request->getQueryParams();
+        $dryRun = isset($params['dry_run']) && $params['dry_run'] !== '0' && $params['dry_run'] !== 'false';
+
         try {
             if ($policyName !== null) {
-                $results = [$this->retentionRunner->runPolicy($policyName)];
+                $results = [$this->retentionRunner->runPolicy($policyName, $dryRun)];
             } else {
-                $results = $this->retentionRunner->runAll();
+                $results = $this->retentionRunner->runAll($dryRun);
             }
         } catch (\InvalidArgumentException $e) {
             return $this->json(['error' => $e->getMessage()], 404, $cors);
