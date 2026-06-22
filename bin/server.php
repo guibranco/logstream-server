@@ -125,7 +125,7 @@ $wsServer = new IoServer(
 
 // ─── HTTP API ─────────────────────────────────────────────────────────────────
 
-$router = new Router($storage, $hub, $writeAuth, $uiSecret, $appVersion, $retentionRunner, $policyRepository);
+$router = new Router($storage, $hub, $writeAuth, $uiSecret, $storageType, $appVersion, $retentionRunner, $policyRepository);
 
 $httpServer = new HttpServer(
     new RequestBodyBufferMiddleware(4 * 1024 * 1024),

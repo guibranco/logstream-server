@@ -37,6 +37,7 @@ final class Router
         private readonly LogHub                             $hub,
         private readonly WriteAuthInterface                 $writeAuth,
         private readonly string                             $uiSecret,
+        private readonly string                             $storageType,
         private readonly string                             $version          = 'dev',
         private readonly ?RetentionRunner                   $retentionRunner  = null,
         private readonly ?RetentionPolicyRepositoryInterface $policyRepository = null,
@@ -56,6 +57,10 @@ final class Router
 
         if ($method === 'GET' && $path === '/api/health') {
             return $this->handleHealth($cors);
+        }
+
+        if ($method === 'GET' && $path === '/api/info') {
+            return $this->handleInfo($cors);
         }
 
         if ($method === 'GET' && ($path === '/docs' || $path === '/')) {
@@ -286,6 +291,19 @@ final class Router
             'status'         => 'ok',
             'time'           => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339),
             'ws_connections' => $this->hub->getConnectionCount(),
+        ], 200, $cors);
+    }
+
+    private function handleInfo(array $cors): Response
+    {
+        return $this->json([
+            'version'      => $this->version,
+            'storage_type' => $this->storageType,
+            'features'     => [
+                'client_management' => $this->storageType === 'mariadb',
+                'retention'         => $this->retentionRunner !== null,
+                'websocket'         => true,
+            ],
         ], 200, $cors);
     }
 
