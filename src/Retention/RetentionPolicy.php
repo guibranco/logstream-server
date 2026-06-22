@@ -98,15 +98,18 @@ final class RetentionPolicy
 
     public static function fromArray(array $data): self
     {
+        $str = static fn(string $key): ?string
+            => (isset($data[$key]) && $data[$key] !== '') ? (string) $data[$key] : null;
+
         return new self(
-            name:          (string) ($data['name']          ?? 'unnamed'),
-            appKey:        isset($data['app_key'])        ? (string) $data['app_key']        : null,
-            appId:         isset($data['app_id'])         ? (string) $data['app_id']         : null,
-            level:         isset($data['level'])          ? (string) $data['level']          : null,
-            category:      isset($data['category'])       ? (string) $data['category']       : null,
-            messageRegex:  isset($data['message_regex'])  ? (string) $data['message_regex']  : null,
-            messageGlob:   isset($data['message_glob'])   ? (string) $data['message_glob']   : null,
-            olderThanDays: isset($data['older_than_days']) ? (int)   $data['older_than_days'] : null,
+            name:          (string) ($data['name'] ?? 'unnamed'),
+            appKey:        $str('app_key'),
+            appId:         $str('app_id'),
+            level:         $str('level'),
+            category:      $str('category'),
+            messageRegex:  $str('message_regex'),
+            messageGlob:   $str('message_glob'),
+            olderThanDays: isset($data['older_than_days']) ? (int) $data['older_than_days'] : null,
         );
     }
 
