@@ -22,12 +22,24 @@ final class FileRetentionEngine implements RetentionEngineInterface
             );
         }
 
+        if (!is_dir($this->basePath)) {
+            return new RetentionResult(
+                policy:   $policy->name,
+                pruned:   0,
+                dryRun:   $dryRun,
+                summary:  "Log directory not found: {$this->basePath}",
+                warnings: ["Log directory does not exist: {$this->basePath}"],
+            );
+        }
+
         $deleted        = 0;
         $filesRemoved   = 0;
         $filesRewritten = 0;
+        $filesScanned   = 0;
         $warnings       = [];
 
         foreach ($this->listDayFiles() as [$fileDate, $filePath]) {
+            $filesScanned++;
             try {
                 [$d, $fr, $frw] = $this->processFile($fileDate, $filePath, $policy, $dryRun);
                 $deleted        += $d;
@@ -42,19 +54,25 @@ final class FileRetentionEngine implements RetentionEngineInterface
             $this->pruneEmptyDirectories($this->basePath);
         }
 
+        $cutoff     = $policy->getCutoffDate();
+        $cutoffDate = $cutoff?->format(\DateTimeInterface::RFC3339);
         $durationMs = (int) ((hrtime(true) - $start) / 1_000_000);
         $prefix     = $dryRun ? '[dry-run] ' : '';
-        $summary    = "{$prefix}{$deleted} entries pruned, {$filesRemoved} files removed, {$filesRewritten} files rewritten";
+        $cutoffStr  = $cutoffDate !== null ? ", cutoff: {$cutoffDate}" : '';
+        $summary    = "{$prefix}{$deleted} entries pruned, {$filesRemoved} files removed, "
+                    . "{$filesRewritten} files rewritten ({$filesScanned} files scanned{$cutoffStr})";
 
         return new RetentionResult(
             policy:         $policy->name,
             pruned:         $deleted,
             filesRemoved:   $filesRemoved,
             filesRewritten: $filesRewritten,
+            filesScanned:   $filesScanned,
             dryRun:         $dryRun,
             durationMs:     $durationMs,
             summary:        $summary,
             warnings:       $warnings,
+            cutoffDate:     $cutoffDate,
         );
     }
 

@@ -101,20 +101,17 @@ final class RetentionPolicyTest extends TestCase
     }
 
     #[Test]
-    public function it_returns_cutoff_date_approximately_n_days_ago(): void
+    public function it_returns_cutoff_date_midnight_n_days_ago(): void
     {
         $policy = RetentionPolicy::fromArray(['name' => 'x', 'older_than_days' => 7]);
         $cutoff = $policy->getCutoffDate();
 
         self::assertNotNull($cutoff);
 
-        $expected = new \DateTimeImmutable('-7 days');
-        // Allow a small window for test execution time (within 5 seconds)
-        self::assertEqualsWithDelta(
-            $expected->getTimestamp(),
-            $cutoff->getTimestamp(),
-            5,
-        );
+        $expected = (new \DateTimeImmutable('today'))->modify('-7 days');
+        self::assertSame($expected->getTimestamp(), $cutoff->getTimestamp());
+        // Cutoff must be exactly midnight (no time component)
+        self::assertSame('00:00:00', $cutoff->format('H:i:s'));
     }
 
     // ──────────────────────────────────────────────────────────────────────────

@@ -25,7 +25,9 @@ final class RetentionPolicy
             return null;
         }
 
-        return new \DateTimeImmutable("-{$this->olderThanDays} days");
+        // Anchor to today's midnight so "older_than_days: 7" means
+        // "strictly before today-7 00:00:00" regardless of what time the runner fires.
+        return (new \DateTimeImmutable('today'))->modify("-{$this->olderThanDays} days");
     }
 
     /** True if at least one field filter (non-date) is set. */

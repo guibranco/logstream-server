@@ -363,7 +363,7 @@ components:
 
     RetentionPolicyResult:
       type: object
-      required: [policy, pruned, files_removed, files_rewritten, dry_run, duration_ms, summary]
+      required: [policy, pruned, files_removed, files_rewritten, files_scanned, dry_run, duration_ms, summary]
       description: Result of executing a single retention policy.
       properties:
         policy:
@@ -382,6 +382,21 @@ components:
           type: integer
           description: Number of day-files partially rewritten (file storage only).
           example: 1
+        files_scanned:
+          type: integer
+          description: >
+            Total number of day-files examined by the engine (file storage only).
+            If this is `0` while you expect matches, the log directory path may be wrong.
+          example: 12
+        cutoff_date:
+          type: string
+          format: date-time
+          nullable: true
+          description: >
+            The computed cutoff timestamp used for this run (midnight N days ago).
+            Entries **before** this date are eligible for deletion. Absent when the
+            policy has no `older_than_days` constraint.
+          example: "2025-01-08T00:00:00+00:00"
         dry_run:
           type: boolean
           description: Whether this was a dry run (no entries were actually deleted).
