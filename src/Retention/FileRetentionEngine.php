@@ -36,7 +36,11 @@ final class FileRetentionEngine implements RetentionEngineInterface
         $filesRemoved   = 0;
         $filesRewritten = 0;
         $filesScanned   = 0;
+        $filesSkipped   = 0;
         $warnings       = [];
+
+        $cutoff     = $policy->getCutoffDate();
+        $cutoffDate = $cutoff?->format(\DateTimeInterface::RFC3339);
 
         foreach ($this->listDayFiles() as [$fileDate, $filePath]) {
             $filesScanned++;
@@ -45,6 +49,14 @@ final class FileRetentionEngine implements RetentionEngineInterface
                 $deleted        += $d;
                 $filesRemoved   += $fr;
                 $filesRewritten += $frw;
+                if ($d === 0 && $fr === 0 && $frw === 0 && $cutoff !== null) {
+                    $fileMidnight = (new \DateTimeImmutable(
+                        $fileDate->format('Y-m-d')
+                    ))->setTime(0, 0, 0);
+                    if ($fileMidnight >= $cutoff) {
+                        $filesSkipped++;
+                    }
+                }
             } catch (\Throwable $e) {
                 $warnings[] = "Error processing {$filePath}: " . $e->getMessage();
             }
@@ -54,13 +66,13 @@ final class FileRetentionEngine implements RetentionEngineInterface
             $this->pruneEmptyDirectories($this->basePath);
         }
 
-        $cutoff     = $policy->getCutoffDate();
-        $cutoffDate = $cutoff?->format(\DateTimeInterface::RFC3339);
-        $durationMs = (int) ((hrtime(true) - $start) / 1_000_000);
-        $prefix     = $dryRun ? '[dry-run] ' : '';
-        $cutoffStr  = $cutoffDate !== null ? ", cutoff: {$cutoffDate}" : '';
-        $summary    = "{$prefix}{$deleted} entries pruned, {$filesRemoved} files removed, "
-                    . "{$filesRewritten} files rewritten ({$filesScanned} files scanned{$cutoffStr})";
+        $durationMs   = (int) ((hrtime(true) - $start) / 1_000_000);
+        $prefix       = $dryRun ? '[dry-run] ' : '';
+        $cutoffStr    = $cutoffDate !== null ? ", cutoff: {$cutoffDate}" : '';
+        $skippedStr   = $filesSkipped > 0 ? ", {$filesSkipped} too recent" : '';
+        $summary      = "{$prefix}{$deleted} entries pruned, {$filesRemoved} files removed, "
+                      . "{$filesRewritten} files rewritten "
+                      . "({$filesScanned} files scanned{$skippedStr}{$cutoffStr})";
 
         return new RetentionResult(
             policy:         $policy->name,
@@ -68,6 +80,7 @@ final class FileRetentionEngine implements RetentionEngineInterface
             filesRemoved:   $filesRemoved,
             filesRewritten: $filesRewritten,
             filesScanned:   $filesScanned,
+            filesSkipped:   $filesSkipped,
             dryRun:         $dryRun,
             durationMs:     $durationMs,
             summary:        $summary,

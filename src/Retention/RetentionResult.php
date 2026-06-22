@@ -16,6 +16,7 @@ final class RetentionResult
         public readonly int     $filesRemoved   = 0,
         public readonly int     $filesRewritten = 0,
         public readonly int     $filesScanned   = 0,
+        public readonly int     $filesSkipped   = 0,
         public readonly bool    $dryRun         = false,
         public readonly int     $durationMs     = 0,
         public readonly string  $summary        = '',
@@ -37,6 +38,10 @@ final class RetentionResult
                 ? $this->summary
                 : "{$this->pruned} entries pruned",
         ];
+
+        if ($this->filesSkipped > 0 || $this->cutoffDate !== null) {
+            $out['files_skipped_too_recent'] = $this->filesSkipped;
+        }
 
         if ($this->cutoffDate !== null) {
             $out['cutoff_date'] = $this->cutoffDate;

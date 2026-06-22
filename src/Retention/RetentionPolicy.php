@@ -25,8 +25,9 @@ final class RetentionPolicy
             return null;
         }
 
-        // Anchor to today's midnight so "older_than_days: 7" means
-        // "strictly before today-7 00:00:00" regardless of what time the runner fires.
+        // Anchor to today's midnight. "older_than_days: N" means "delete entries
+        // strictly older than N days": entries timestamped before today-N 00:00:00
+        // are removed; entries from today-N 00:00:00 onwards are kept.
         return (new \DateTimeImmutable('today'))->modify("-{$this->olderThanDays} days");
     }
 
