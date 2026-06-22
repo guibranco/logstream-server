@@ -19,7 +19,7 @@ use Psr\Http\Message\ServerRequestInterface;
  * The resolved app_key from the matching row is returned on success and
  * used as the default app_key for ingested log entries.
  */
-final class DatabaseWriteAuth implements WriteAuthInterface
+final class DatabaseWriteAuth implements WriteAuthInterface, CacheFlushableInterface
 {
     /** In-memory cache: app_key → api_token (populated lazily, cleared on miss). */
     private array $cache = [];

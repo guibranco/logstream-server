@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace LogService\Http;
 
+use LogService\Auth\CacheFlushableInterface;
 use LogService\Auth\WriteAuthInterface;
 use LogService\Models\LogEntry;
+use LogService\Repository\ClientRepository;
 use LogService\Retention\RetentionPolicy;
 use LogService\Retention\RetentionPolicyRepositoryInterface;
 use LogService\Retention\RetentionRunner;
@@ -33,14 +35,16 @@ use React\Http\Message\Response;
 final class Router
 {
     public function __construct(
-        private readonly StorageInterface                    $storage,
-        private readonly LogHub                             $hub,
-        private readonly WriteAuthInterface                 $writeAuth,
-        private readonly string                             $uiSecret,
-        private readonly string                             $storageType,
-        private readonly string                             $version          = 'dev',
-        private readonly ?RetentionRunner                   $retentionRunner  = null,
-        private readonly ?RetentionPolicyRepositoryInterface $policyRepository = null,
+        private readonly StorageInterface                     $storage,
+        private readonly LogHub                              $hub,
+        private readonly WriteAuthInterface                  $writeAuth,
+        private readonly string                              $uiSecret,
+        private readonly string                              $storageType,
+        private readonly string                              $version           = 'dev',
+        private readonly ?RetentionRunner                    $retentionRunner   = null,
+        private readonly ?RetentionPolicyRepositoryInterface $policyRepository  = null,
+        private readonly ?ClientRepository                   $clientRepository  = null,
+        private readonly ?CacheFlushableInterface            $writeAuthDb       = null,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -82,6 +86,43 @@ final class Router
                 return $this->json(['error' => 'Unauthorized'], 401, $cors);
             }
             return $this->routeRetention($method, $path, $request, $cors);
+        }
+
+        // ── Client management ─────────────────────────────────────────────────
+
+        if ($path === '/api/clients') {
+            if (!$this->isReadAuthorised($request)) {
+                return $this->json(['error' => 'Unauthorized'], 401, $cors);
+            }
+            return match ($method) {
+                'GET'   => $this->handleClientList($cors),
+                'POST'  => $this->handleClientCreate($request, $cors),
+                default => $this->json(['error' => 'Method not allowed'], 405, $cors),
+            };
+        }
+
+        // /rotate must be matched before the generic /{key} pattern
+        if (preg_match('#^/api/clients/([^/]+)/rotate$#', $path, $m)) {
+            if (!$this->isReadAuthorised($request)) {
+                return $this->json(['error' => 'Unauthorized'], 401, $cors);
+            }
+            if ($method !== 'POST') {
+                return $this->json(['error' => 'Method not allowed'], 405, $cors);
+            }
+            return $this->handleClientRotate(urldecode($m[1]), $cors);
+        }
+
+        if (preg_match('#^/api/clients/([^/]+)$#', $path, $m)) {
+            if (!$this->isReadAuthorised($request)) {
+                return $this->json(['error' => 'Unauthorized'], 401, $cors);
+            }
+            $key = urldecode($m[1]);
+            return match ($method) {
+                'GET'    => $this->handleClientGet($key, $cors),
+                'PUT'    => $this->handleClientUpdate($key, $request, $cors),
+                'DELETE' => $this->handleClientDelete($key, $cors),
+                default  => $this->json(['error' => 'Method not allowed'], 405, $cors),
+            };
         }
 
         // ── Write endpoint ────────────────────────────────────────────────────
@@ -417,6 +458,122 @@ final class Router
         }
 
         return $this->json($entry->toArray(), 200, $cors);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Client management handlers
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private function handleClientList(array $cors): Response
+    {
+        if ($this->clientRepository === null) {
+            return $this->dbOnlyError($cors);
+        }
+        return $this->json([
+            'clients' => array_map(fn($c) => $c->toPublicArray(), $this->clientRepository->all()),
+        ], 200, $cors);
+    }
+
+    private function handleClientGet(string $appKey, array $cors): Response
+    {
+        if ($this->clientRepository === null) {
+            return $this->dbOnlyError($cors);
+        }
+        $client = $this->clientRepository->findByKey($appKey);
+        if ($client === null) {
+            return $this->json(['error' => "Client '{$appKey}' not found."], 404, $cors);
+        }
+        return $this->json($client->toPublicArray(), 200, $cors);
+    }
+
+    private function handleClientCreate(ServerRequestInterface $request, array $cors): Response
+    {
+        if ($this->clientRepository === null) {
+            return $this->dbOnlyError($cors);
+        }
+        $body = json_decode((string) $request->getBody(), true);
+        if (!is_array($body)) {
+            return $this->json(['error' => 'Invalid JSON body.'], 400, $cors);
+        }
+        $name   = trim($body['name']    ?? '');
+        $appKey = trim($body['app_key'] ?? '');
+
+        if ($name === '' || $appKey === '') {
+            return $this->json(['error' => "'name' and 'app_key' are required."], 422, $cors);
+        }
+        if (!preg_match('/^[a-z0-9][a-z0-9\-]*$/', $appKey)) {
+            return $this->json([
+                'error' => "'app_key' must be lowercase letters, numbers, and hyphens only.",
+            ], 422, $cors);
+        }
+        try {
+            $client = $this->clientRepository->create($name, $appKey);
+        } catch (\RuntimeException $e) {
+            return $this->json(['error' => $e->getMessage()], 409, $cors);
+        }
+        return $this->json($client->toCreatedArray(), 201, $cors);
+    }
+
+    private function handleClientUpdate(string $appKey, ServerRequestInterface $request, array $cors): Response
+    {
+        if ($this->clientRepository === null) {
+            return $this->dbOnlyError($cors);
+        }
+        $existing = $this->clientRepository->findByKey($appKey);
+        if ($existing === null) {
+            return $this->json(['error' => "Client '{$appKey}' not found."], 404, $cors);
+        }
+        $body   = json_decode((string) $request->getBody(), true) ?? [];
+        $name   = trim($body['name'] ?? $existing->name);
+        $active = isset($body['active']) ? (bool) $body['active'] : $existing->active;
+
+        if ($name === '') {
+            return $this->json(['error' => "'name' cannot be empty."], 422, $cors);
+        }
+        try {
+            $updated = $this->clientRepository->update($appKey, $name, $active);
+        } catch (\RuntimeException $e) {
+            return $this->json(['error' => $e->getMessage()], 400, $cors);
+        }
+        $this->writeAuthDb?->flushCache();
+        return $this->json($updated->toPublicArray(), 200, $cors);
+    }
+
+    private function handleClientRotate(string $appKey, array $cors): Response
+    {
+        if ($this->clientRepository === null) {
+            return $this->dbOnlyError($cors);
+        }
+        try {
+            $client = $this->clientRepository->rotateToken($appKey);
+        } catch (\RuntimeException $e) {
+            return $this->json(['error' => $e->getMessage()], 404, $cors);
+        }
+        $this->writeAuthDb?->flushCache();
+        return $this->json($client->toCreatedArray(), 200, $cors);
+    }
+
+    private function handleClientDelete(string $appKey, array $cors): Response
+    {
+        if ($this->clientRepository === null) {
+            return $this->dbOnlyError($cors);
+        }
+        try {
+            $logsDeleted = $this->clientRepository->delete($appKey);
+        } catch (\RuntimeException $e) {
+            return $this->json(['error' => $e->getMessage()], 404, $cors);
+        }
+        $this->writeAuthDb?->flushCache();
+        return $this->json(['deleted' => $appKey, 'logs_deleted' => $logsDeleted], 200, $cors);
+    }
+
+    private function dbOnlyError(array $cors): Response
+    {
+        return $this->json(
+            ['error' => 'Client management requires STORAGE_TYPE=mariadb.'],
+            503,
+            $cors,
+        );
     }
 
     // ──────────────────────────────────────────────────────────────────────────

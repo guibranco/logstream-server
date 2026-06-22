@@ -9,6 +9,7 @@ use Dotenv\Dotenv;
 use LogService\Auth\DatabaseWriteAuth;
 use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Http\Router;
+use LogService\Repository\ClientRepository;
 use LogService\Retention\DatabaseRetentionEngine;
 use LogService\Retention\DatabaseRetentionPolicyRepository;
 use LogService\Retention\FileRetentionEngine;
@@ -41,6 +42,9 @@ $appVersion  = $_ENV['APP_VERSION']  ?? 'dev';
 
 // ─── Storage + Write Auth ─────────────────────────────────────────────────────
 
+$writeAuthDb      = null;
+$clientRepository = null;
+
 if ($storageType === 'mariadb') {
     $dsn  = sprintf(
         'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
@@ -54,11 +58,14 @@ if ($storageType === 'mariadb') {
         PDO::ATTR_EMULATE_PREPARES   => false,
     ]);
 
-    $storage   = new MariaDBStorage($dsn, $_ENV['DB_USER'] ?? 'root', $_ENV['DB_PASS'] ?? '');
-    $writeAuth = new DatabaseWriteAuth($pdo);
+    $storage          = new MariaDBStorage($dsn, $_ENV['DB_USER'] ?? 'root', $_ENV['DB_PASS'] ?? '');
+    $writeAuthDb      = new DatabaseWriteAuth($pdo);
+    $writeAuth        = $writeAuthDb;
+    $clientRepository = new ClientRepository($pdo);
 
     $authMode = 'per-client (X-Api-Key / X-Api-Token  →  clients table)';
     echo "[Storage]  MariaDB ({$_ENV['DB_HOST']}:{$_ENV['DB_PORT']}/{$_ENV['DB_NAME']})\n";
+    echo "[Clients]  Client management enabled\n";
 } else {
     $logPath   = $_ENV['LOG_PATH'] ?? __DIR__ . '/../storage/logs';
     $storage   = new FileStorage($logPath);
@@ -125,7 +132,18 @@ $wsServer = new IoServer(
 
 // ─── HTTP API ─────────────────────────────────────────────────────────────────
 
-$router = new Router($storage, $hub, $writeAuth, $uiSecret, $storageType, $appVersion, $retentionRunner, $policyRepository);
+$router = new Router(
+    storage:          $storage,
+    hub:              $hub,
+    writeAuth:        $writeAuth,
+    uiSecret:         $uiSecret,
+    storageType:      $storageType,
+    version:          $appVersion,
+    retentionRunner:  $retentionRunner,
+    policyRepository: $policyRepository,
+    clientRepository: $clientRepository,
+    writeAuthDb:      $writeAuthDb,
+);
 
 $httpServer = new HttpServer(
     new RequestBodyBufferMiddleware(4 * 1024 * 1024),
