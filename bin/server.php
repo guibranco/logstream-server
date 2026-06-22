@@ -9,10 +9,12 @@ use Dotenv\Dotenv;
 use LogService\Auth\DatabaseWriteAuth;
 use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Http\Router;
-use LogService\Retention\DatabasePruner;
-use LogService\Retention\FileStoragePruner;
+use LogService\Retention\DatabaseRetentionEngine;
+use LogService\Retention\DatabaseRetentionPolicyRepository;
+use LogService\Retention\FileRetentionEngine;
+use LogService\Retention\FileRetentionPolicyRepository;
 use LogService\Retention\RetentionConfig;
-use LogService\Retention\RetentionEngine;
+use LogService\Retention\RetentionRunner;
 use LogService\Storage\FileStorage;
 use LogService\Storage\MariaDBStorage;
 use LogService\WebSocket\LogHub;
@@ -72,8 +74,9 @@ if (empty($uiSecret)) {
 
 // ─── Retention ────────────────────────────────────────────────────────────────
 
-$retentionEngine = null;
-$retentionConfig = RetentionConfig::disabled();
+$retentionRunner     = null;
+$policyRepository    = null;
+$retentionConfig     = RetentionConfig::disabled();
 
 $retentionConfigPath = $_ENV['RETENTION_CONFIG'] ?? null;
 if ($retentionConfigPath !== null) {
@@ -87,13 +90,22 @@ if ($retentionConfigPath !== null) {
     }
 }
 
-if ($retentionConfig->enabled) {
-    $retentionPruner = ($storageType === 'mariadb')
-        ? new DatabasePruner($pdo)
-        : new FileStoragePruner($logPath ?? (__DIR__ . '/../storage/logs'));
-    $retentionEngine = new RetentionEngine($retentionPruner, $retentionConfig);
-    echo "[Retention] Enabled — " . count($retentionConfig->policies) . " polic"
-        . (count($retentionConfig->policies) === 1 ? 'y' : 'ies')
+if ($retentionConfig->isEnabled()) {
+    if ($storageType === 'mariadb') {
+        $retentionEngine  = new DatabaseRetentionEngine($pdo);
+        $policyRepository = new DatabaseRetentionPolicyRepository($pdo);
+    } else {
+        $retentionEngine  = new FileRetentionEngine($logPath ?? (__DIR__ . '/../storage/logs'));
+        $policyRepository = new FileRetentionPolicyRepository(
+            $retentionConfigPath ?? (__DIR__ . '/../retention.json'),
+        );
+    }
+
+    $retentionRunner = new RetentionRunner($retentionEngine, $retentionConfig);
+
+    $policyCount = count($retentionConfig->getPolicies());
+    echo "[Retention] Enabled — {$policyCount} polic"
+        . ($policyCount === 1 ? 'y' : 'ies')
         . ", interval: {$retentionConfig->intervalHours}h\n";
 } else {
     echo "[Retention] Disabled\n";
@@ -113,7 +125,7 @@ $wsServer = new IoServer(
 
 // ─── HTTP API ─────────────────────────────────────────────────────────────────
 
-$router = new Router($storage, $hub, $writeAuth, $uiSecret, $appVersion, $retentionEngine);
+$router = new Router($storage, $hub, $writeAuth, $uiSecret, $appVersion, $retentionRunner, $policyRepository);
 
 $httpServer = new HttpServer(
     new RequestBodyBufferMiddleware(4 * 1024 * 1024),
@@ -142,11 +154,9 @@ echo "║  Write auth : {$authMode}\n";
 echo "║  Read key   : " . (empty($uiSecret) ? '⚠️  NOT SET' : '✅ set') . "\n";
 echo "╚══════════════════════════════════════════╝\n\n";
 
- // ─── Retention periodic timer ─────────────────────────────────────────────────
+// ─── Retention periodic timer ─────────────────────────────────────────────────
 
-if ($retentionEngine !== null) {
-    // Guard against zero or very small intervals to avoid a tight periodic loop.
-    // Enforce a minimum of 1 hour between runs.
+if ($retentionRunner !== null) {
     $retentionIntervalHours = max(1, (int) $retentionConfig->intervalHours);
 
     if ($retentionIntervalHours !== (int) $retentionConfig->intervalHours) {
@@ -155,12 +165,12 @@ if ($retentionEngine !== null) {
 
     $retentionIntervalSeconds = $retentionIntervalHours * 3600;
 
-    $loop->addPeriodicTimer($retentionIntervalSeconds, function () use ($retentionEngine) {
+    $loop->addPeriodicTimer($retentionIntervalSeconds, function () use ($retentionRunner) {
         echo '[Retention] Running scheduled policies...' . "\n";
-        $results     = $retentionEngine->run();
+        $results     = $retentionRunner->runAll();
         $totalPruned = array_sum(array_map(fn($r) => $r->pruned, $results));
         foreach ($results as $r) {
-            $line = "[Retention] Policy '{$r->policy}': {$r->pruned} pruned";
+            $line = "[Retention] Policy '{$r->policy}': {$r->summary}";
             if ($r->error !== null) {
                 $line .= " (ERROR: {$r->error})";
             }

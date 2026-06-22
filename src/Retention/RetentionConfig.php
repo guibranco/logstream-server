@@ -48,4 +48,27 @@ final class RetentionConfig
     {
         return new self(enabled: false);
     }
+
+    // ──────────────────────────────────────────────────────────────────────────
+
+    public function isEnabled(): bool
+    {
+        return $this->enabled;
+    }
+
+    /** @return RetentionPolicy[] */
+    public function getPolicies(): array
+    {
+        return $this->policies;
+    }
+
+    public function getPolicy(string $name): ?RetentionPolicy
+    {
+        foreach ($this->policies as $policy) {
+            if ($policy->name === $name) {
+                return $policy;
+            }
+        }
+        return null;
+    }
 }
