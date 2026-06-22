@@ -186,13 +186,12 @@ components:
 
     Client:
       type: object
-      required: [id, name, app_key, active, created_at, updated_at]
-      description: A registered application client (MariaDB storage mode only).
+      required: [name, app_key, active, created_at, updated_at]
+      description: >
+        Public representation of a registered client application (MariaDB mode only).
+        The `api_token` is **never** included — use `ClientCreated` for the
+        create/rotate responses that surface it once.
       properties:
-        id:
-          type: integer
-          description: Auto-increment internal identifier.
-          example: 1
         name:
           type: string
           maxLength: 255
@@ -201,7 +200,7 @@ components:
         app_key:
           type: string
           maxLength: 100
-          description: Unique key sent in `X-Api-Key` header.
+          description: Unique key used in the `X-Api-Key` header for log ingestion.
           example: billing-api
         active:
           type: boolean
@@ -210,11 +209,81 @@ components:
         created_at:
           type: string
           format: date-time
-          example: "2025-01-15T09:00:00.000Z"
+          example: "2025-01-15T09:00:00+00:00"
         updated_at:
           type: string
           format: date-time
-          example: "2025-01-15T09:00:00.000Z"
+          example: "2025-01-15T09:00:00+00:00"
+
+    ClientCreated:
+      allOf:
+        - $ref: '#/components/schemas/Client'
+        - type: object
+          required: [api_token, _note]
+          properties:
+            api_token:
+              type: string
+              description: >
+                The raw API token — returned **exactly once** after create or rotate.
+                Store it immediately; it will not be retrievable again.
+              example: dGhpcyBpcyBhIHNhbXBsZSB0b2tlbg
+            _note:
+              type: string
+              example: "Store this token now — it will not be shown again."
+
+    ClientInput:
+      type: object
+      required: [name, app_key]
+      description: Request body for creating a new client application.
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          example: Billing API
+        app_key:
+          type: string
+          maxLength: 100
+          description: >
+            Unique slug for this application. Lowercase letters, digits, and
+            hyphens only. Must start with a letter or digit.
+          example: billing-api
+
+    ClientUpdateInput:
+      type: object
+      description: >
+        Request body for updating a client. Both fields are optional —
+        omitted fields keep their current values.
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          example: New Display Name
+        active:
+          type: boolean
+          description: Set to `false` to deactivate the client immediately.
+          example: true
+
+    ClientListResponse:
+      type: object
+      required: [clients]
+      properties:
+        clients:
+          type: array
+          items:
+            $ref: '#/components/schemas/Client'
+
+    ClientDeletedResponse:
+      type: object
+      required: [deleted, logs_deleted]
+      properties:
+        deleted:
+          type: string
+          description: The `app_key` of the deleted client.
+          example: billing-api
+        logs_deleted:
+          type: integer
+          description: Number of `log_entries` rows deleted in the same transaction.
+          example: 42
 
     RetentionPolicy:
       type: object
@@ -679,6 +748,14 @@ components:
       description: Unique name of the retention policy.
       example: debug-7d
 
+    ClientKey:
+      name: app_key
+      in: path
+      required: true
+      schema: { type: string, maxLength: 100 }
+      description: The `app_key` of the client application.
+      example: billing-api
+
   # ── Reusable responses ────────────────────────────────────────────────────────
   responses:
 
@@ -752,6 +829,15 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
           example:
             error: Retention is not configured
+
+    ClientsUnavailable:
+      description: Client management requires `STORAGE_TYPE=mariadb`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Client management requires STORAGE_TYPE=mariadb.
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 paths:
@@ -1275,10 +1361,279 @@ paths:
         "503":
           $ref: '#/components/responses/RetentionUnavailable'
 
+  /api/clients:
+    get:
+      operationId: listClients
+      summary: List all client applications
+      description: >
+        Returns all registered client applications ordered by name.
+        Token values are never included.
+
+        Only available when `STORAGE_TYPE=mariadb`. Returns `503` otherwise.
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Applications]
+      security:
+        - ReadKey: []
+      responses:
+        "200":
+          description: List of registered clients.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientListResponse'
+              example:
+                clients:
+                  - name: Billing API
+                    app_key: billing-api
+                    active: true
+                    created_at: "2025-01-15T09:00:00+00:00"
+                    updated_at: "2025-01-15T09:00:00+00:00"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "503":
+          $ref: '#/components/responses/ClientsUnavailable'
+
+    post:
+      operationId: createClient
+      summary: Register a new client application
+      description: |
+        Creates a new client application and generates its `api_token`.
+
+        **The `api_token` is returned exactly once in this response. Store it
+        immediately — it will not be shown again.** To get a new token later,
+        use `POST /api/clients/{app_key}/rotate`.
+
+        The `app_key` must be lowercase letters, digits, and hyphens only,
+        and must start with a letter or digit. Returns `409` if the
+        `app_key` is already taken.
+
+        Only available when `STORAGE_TYPE=mariadb`. Returns `503` otherwise.
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Applications]
+      security:
+        - ReadKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientInput'
+            example:
+              name: Billing API
+              app_key: billing-api
+      responses:
+        "201":
+          description: Client created — includes the one-time `api_token`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientCreated'
+              example:
+                name: Billing API
+                app_key: billing-api
+                active: true
+                created_at: "2025-01-15T09:00:00+00:00"
+                updated_at: "2025-01-15T09:00:00+00:00"
+                api_token: dGhpcyBpcyBhIHNhbXBsZSB0b2tlbg
+                _note: "Store this token now — it will not be shown again."
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          description: Validation error — missing or invalid fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missingField:
+                  summary: Missing required field
+                  value:
+                    error: "'name' and 'app_key' are required."
+                invalidFormat:
+                  summary: Invalid app_key format
+                  value:
+                    error: "'app_key' must be lowercase letters, numbers, and hyphens only."
+        "503":
+          $ref: '#/components/responses/ClientsUnavailable'
+
+  /api/clients/{app_key}:
+    get:
+      operationId: getClient
+      summary: Get a single client application
+      description: >
+        Returns the public details of a single registered client.
+        Token is never included.
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Applications]
+      security:
+        - ReadKey: []
+      parameters:
+        - $ref: '#/components/parameters/ClientKey'
+      responses:
+        "200":
+          description: Client details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Client'
+              example:
+                name: Billing API
+                app_key: billing-api
+                active: true
+                created_at: "2025-01-15T09:00:00+00:00"
+                updated_at: "2025-01-20T11:30:00+00:00"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "503":
+          $ref: '#/components/responses/ClientsUnavailable'
+
+    put:
+      operationId: updateClient
+      summary: Update a client application
+      description: |
+        Updates the display name and/or active status of a client.
+        Both body fields are optional — omitted fields keep their current values.
+
+        Setting `active: false` deactivates the client immediately:
+        the auth cache is flushed so existing tokens stop working on the
+        next request (no server restart required).
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Applications]
+      security:
+        - ReadKey: []
+      parameters:
+        - $ref: '#/components/parameters/ClientKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientUpdateInput'
+            example:
+              name: Billing API v2
+              active: false
+      responses:
+        "200":
+          description: Updated client — no token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Client'
+              example:
+                name: Billing API v2
+                app_key: billing-api
+                active: false
+                created_at: "2025-01-15T09:00:00+00:00"
+                updated_at: "2025-01-20T11:30:00+00:00"
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "422":
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "'name' cannot be empty."
+        "503":
+          $ref: '#/components/responses/ClientsUnavailable'
+
+    delete:
+      operationId: deleteClient
+      summary: Delete a client application and its logs
+      description: |
+        Permanently deletes the client AND all `log_entries` rows associated
+        with its `app_key` in a single database transaction.
+
+        The auth cache is flushed immediately so the old credentials stop
+        working at once.
+
+        **This action is irreversible.**
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Applications]
+      security:
+        - ReadKey: []
+      parameters:
+        - $ref: '#/components/parameters/ClientKey'
+      responses:
+        "200":
+          description: Client and associated log entries deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientDeletedResponse'
+              example:
+                deleted: billing-api
+                logs_deleted: 1842
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "503":
+          $ref: '#/components/responses/ClientsUnavailable'
+
+  /api/clients/{app_key}/rotate:
+    post:
+      operationId: rotateClientToken
+      summary: Rotate a client's API token
+      description: |
+        Generates a fresh `api_token` for the client. The old token is
+        invalidated immediately (auth cache flushed).
+
+        **The new token is returned exactly once in this response. Store it
+        immediately — it will not be shown again.**
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Applications]
+      security:
+        - ReadKey: []
+      parameters:
+        - $ref: '#/components/parameters/ClientKey'
+      responses:
+        "200":
+          description: Token rotated — includes the new one-time `api_token`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientCreated'
+              example:
+                name: Billing API
+                app_key: billing-api
+                active: true
+                created_at: "2025-01-15T09:00:00+00:00"
+                updated_at: "2025-01-20T11:30:00+00:00"
+                api_token: bmV3LXJvdGF0ZWQtdG9rZW4taGVyZQ
+                _note: "Store this token now — it will not be shown again."
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "503":
+          $ref: '#/components/responses/ClientsUnavailable'
+
 # ── Tag descriptions ──────────────────────────────────────────────────────────
 tags:
   - name: Logs
     description: Log ingestion and search (both storage modes).
+  - name: Applications
+    description: >
+      Client application management — MariaDB mode only (`STORAGE_TYPE=mariadb`).
+      All endpoints require `Authorization: Bearer <UI_SECRET>` and return `503`
+      in file storage mode. The `api_token` is exposed **only once** on create
+      and rotate responses.
   - name: Retention
     description: >
       Retention policy management and execution.
