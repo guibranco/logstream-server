@@ -35,7 +35,7 @@ info:
 
     ## Read authentication (both modes)
 
-    `GET /api/logs` and `GET /api/logs/{id}` always require:
+    `GET /api/logs`, `GET /api/logs/{id}`, and all `/api/retention/*` endpoints always require:
     ```
     Authorization: Bearer <UI_SECRET>
     ```
@@ -45,9 +45,9 @@ info:
     Connect to `wss://host/ws?token=<UI_SECRET>`.
     Every ingested log entry is broadcast in real-time to all connected clients.
 
-    ## Health check
+    ## Public endpoints
 
-    `GET /api/health` is **public** — no authentication required.
+    `GET /api/health` and `GET /api/info` are **public** — no authentication required.
   version: '{{APP_VERSION}}'
   contact:
     name: guibranco
@@ -101,7 +101,8 @@ components:
       description: |
         **Both storage modes.**
         Read-only key (`UI_SECRET` from `.env`).
-        Required on `GET /api/logs` and `GET /api/logs/{id}`.
+        Required on `GET /api/logs`, `GET /api/logs/{id}`, and all
+        `/api/retention/*` endpoints.
         Send as `Authorization: Bearer <UI_SECRET>`.
 
   # ── Reusable schemas ──────────────────────────────────────────────────────────
@@ -214,6 +215,185 @@ components:
           type: string
           format: date-time
           example: "2025-01-15T09:00:00.000Z"
+
+    RetentionPolicy:
+      type: object
+      required: [name]
+      description: >
+        A retention policy defines which log entries to delete and, optionally,
+        after how many days. All filter fields are optional and combined with AND logic —
+        an entry must match every specified criterion to be deleted.
+      properties:
+        name:
+          type: string
+          description: Unique policy identifier.
+          example: debug-7d
+        app_key:
+          type: string
+          nullable: true
+          description: Delete entries from this application only.
+          example: billing-api
+        app_id:
+          type: string
+          nullable: true
+          description: Delete entries from this environment only.
+          example: production
+        level:
+          $ref: '#/components/schemas/LogLevel'
+        category:
+          type: string
+          nullable: true
+          description: Delete entries matching this category exactly.
+          example: payments
+        message_regex:
+          type: string
+          nullable: true
+          description: Delete entries whose message matches this PCRE pattern.
+          example: '.*@hotmail\.com.*'
+        message_glob:
+          type: string
+          nullable: true
+          description: Delete entries whose message matches this glob pattern.
+          example: '*@hotmail.com*'
+        older_than_days:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: Delete entries older than this many days.
+          example: 7
+
+    RetentionPolicyInput:
+      type: object
+      required: [name]
+      description: Request body for creating or updating a retention policy.
+      properties:
+        name:
+          type: string
+          example: debug-7d
+        app_key:
+          type: string
+          example: billing-api
+        app_id:
+          type: string
+          example: production
+        level:
+          $ref: '#/components/schemas/LogLevel'
+        category:
+          type: string
+          example: payments
+        message_regex:
+          type: string
+          example: '.*@hotmail\.com.*'
+        message_glob:
+          type: string
+          example: '*@hotmail.com*'
+        older_than_days:
+          type: integer
+          minimum: 1
+          example: 7
+
+    RetentionPolicyResult:
+      type: object
+      required: [policy, pruned, files_removed, files_rewritten, dry_run, duration_ms, summary]
+      description: Result of executing a single retention policy.
+      properties:
+        policy:
+          type: string
+          description: Name of the retention policy that was executed.
+          example: debug-7d
+        pruned:
+          type: integer
+          description: Number of log entries removed (or that would be removed in dry-run mode).
+          example: 42
+        files_removed:
+          type: integer
+          description: Number of day-files deleted outright (file storage only).
+          example: 3
+        files_rewritten:
+          type: integer
+          description: Number of day-files partially rewritten (file storage only).
+          example: 1
+        dry_run:
+          type: boolean
+          description: Whether this was a dry run (no entries were actually deleted).
+          example: false
+        duration_ms:
+          type: integer
+          description: Wall-clock time taken to execute this policy, in milliseconds.
+          example: 18
+        summary:
+          type: string
+          description: Human-readable summary of what happened.
+          example: "42 entries pruned, 3 files removed, 1 files rewritten"
+        warnings:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: Non-fatal warnings encountered during execution.
+        error:
+          type: string
+          nullable: true
+          description: Error message if this policy failed to execute.
+          example: null
+
+    RetentionRunResponse:
+      type: object
+      required: [ran_at, policies, total_pruned]
+      properties:
+        ran_at:
+          type: string
+          format: date-time
+          description: Timestamp when the retention run started.
+          example: "2025-01-15T14:22:00+00:00"
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetentionPolicyResult'
+        total_pruned:
+          type: integer
+          description: Total number of log entries removed across all policies.
+          example: 156
+
+    RetentionPolicyListResponse:
+      type: object
+      required: [policies]
+      properties:
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetentionPolicy'
+
+    InfoResponse:
+      type: object
+      required: [version, storage_type, features]
+      description: Server version and feature availability.
+      properties:
+        version:
+          type: string
+          description: Semver string calculated by GitVersion (or `dev` in local development).
+          example: 1.0.4
+        storage_type:
+          type: string
+          enum: [file, mariadb]
+          description: Active storage backend.
+          example: file
+        features:
+          type: object
+          required: [client_management, retention, websocket]
+          properties:
+            client_management:
+              type: boolean
+              description: True when `STORAGE_TYPE=mariadb` (client CRUD is available).
+              example: false
+            retention:
+              type: boolean
+              description: True when a retention config is loaded and enabled.
+              example: false
+            websocket:
+              type: boolean
+              description: Always true — WebSocket is always available.
+              example: true
 
     IngestEntry:
       type: object
@@ -406,42 +586,6 @@ components:
           description: Additional detail about why the request was rejected.
           example: "Unknown client: my-app"
 
-    RetentionPolicyResult:
-      type: object
-      required: [policy, pruned]
-      properties:
-        policy:
-          type: string
-          description: Name of the retention policy that was executed.
-          example: remove-debug-7d
-        pruned:
-          type: integer
-          description: Number of log entries removed by this policy.
-          example: 42
-        error:
-          type: string
-          nullable: true
-          description: Error message if this policy failed to execute.
-          example: null
-
-    RetentionRunResponse:
-      type: object
-      required: [ran_at, policies, total_pruned]
-      properties:
-        ran_at:
-          type: string
-          format: date-time
-          description: Timestamp when the retention run started.
-          example: "2025-01-15T14:22:00+00:00"
-        policies:
-          type: array
-          items:
-            $ref: '#/components/schemas/RetentionPolicyResult'
-        total_pruned:
-          type: integer
-          description: Total number of log entries removed across all policies.
-          example: 156
-
   # ── Reusable parameters ───────────────────────────────────────────────────────
   parameters:
 
@@ -527,6 +671,14 @@ components:
       schema: { type: integer, minimum: 0, default: 0 }
       description: Number of entries to skip (for pagination).
 
+    PolicyName:
+      name: name
+      in: path
+      required: true
+      schema: { type: string }
+      description: Unique name of the retention policy.
+      example: debug-7d
+
   # ── Reusable responses ────────────────────────────────────────────────────────
   responses:
 
@@ -566,7 +718,7 @@ components:
                 reason: "Invalid token for client: billing-api"
 
     NotFound:
-      description: No entry found for the supplied ID or trace_id.
+      description: The requested resource was not found.
       content:
         application/json:
           schema:
@@ -583,6 +735,24 @@ components:
           example:
             error: app_key and app_id are required
 
+    Conflict:
+      description: A resource with this name already exists.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Policy 'debug-7d' already exists."
+
+    RetentionUnavailable:
+      description: Retention is not configured on this server instance.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Retention is not configured
+
 # ── Paths ─────────────────────────────────────────────────────────────────────
 paths:
 
@@ -592,7 +762,7 @@ paths:
       summary: Health check
       description: >
         Returns the current server status and the number of active WebSocket
-        connections. This endpoint is **public** — no authentication required.
+        connections. **Public** — no authentication required.
       tags: [System]
       responses:
         "200":
@@ -605,6 +775,45 @@ paths:
                 status: ok
                 time: "2025-01-15T14:22:00+00:00"
                 ws_connections: 2
+
+  /api/info:
+    get:
+      operationId: getInfo
+      summary: Server info and feature flags
+      description: >
+        Returns the running server version, active storage backend, and which
+        optional features are enabled. The UI reads this once on load to decide
+        which navigation tabs to render (e.g. the Applications tab requires
+        `features.client_management: true`).
+
+        **Public** — no authentication required.
+      tags: [System]
+      responses:
+        "200":
+          description: Server information.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InfoResponse'
+              examples:
+                fileMode:
+                  summary: File storage mode (no client management)
+                  value:
+                    version: 1.0.4
+                    storage_type: file
+                    features:
+                      client_management: false
+                      retention: true
+                      websocket: true
+                mariadbMode:
+                  summary: MariaDB storage mode (client management available)
+                  value:
+                    version: 1.0.4
+                    storage_type: mariadb
+                    features:
+                      client_management: true
+                      retention: true
+                      websocket: true
 
   /api/logs:
     post:
@@ -804,18 +1013,17 @@ paths:
 
   /api/retention/run:
     post:
-      operationId: runRetention
-      summary: Run retention policies
+      operationId: runRetentionAll
+      summary: Run all retention policies
       description: |
         Manually trigger execution of all configured retention policies.
         Each policy is evaluated in order and matching log entries are deleted.
 
-        Requires `Authorization: Bearer <UI_SECRET>` (same credential used for
-        read endpoints).
-
         Returns `503` when retention is not configured on this server instance
         (i.e. `RETENTION_CONFIG` is not set or points to a disabled config).
-      tags: [System]
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Retention]
       security:
         - ReadKey: []
       responses:
@@ -828,25 +1036,240 @@ paths:
               example:
                 ran_at: "2025-01-15T14:22:00+00:00"
                 policies:
-                  - policy: remove-debug-7d
+                  - policy: debug-7d
                     pruned: 42
-                  - policy: remove-all-90d
+                    files_removed: 3
+                    files_rewritten: 0
+                    dry_run: false
+                    duration_ms: 12
+                    summary: "42 entries pruned, 3 files removed, 0 files rewritten"
+                  - policy: all-90d
                     pruned: 114
+                    files_removed: 8
+                    files_rewritten: 1
+                    dry_run: false
+                    duration_ms: 31
+                    summary: "114 entries pruned, 8 files removed, 1 files rewritten"
                 total_pruned: 156
         "401":
           $ref: '#/components/responses/Unauthorized'
         "503":
-          description: Retention is not configured on this server instance.
+          $ref: '#/components/responses/RetentionUnavailable'
+
+  /api/retention/policies:
+    get:
+      operationId: listRetentionPolicies
+      summary: List retention policies
+      description: >
+        Returns all retention policies currently stored in the repository.
+        Returns `503` when the policy repository is not configured.
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Retention]
+      security:
+        - ReadKey: []
+      responses:
+        "200":
+          description: List of configured policies.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: '#/components/schemas/RetentionPolicyListResponse'
               example:
-                error: Retention is not configured
+                policies:
+                  - name: debug-7d
+                    level: debug
+                    older_than_days: 7
+                  - name: all-90d
+                    older_than_days: 90
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "503":
+          $ref: '#/components/responses/RetentionUnavailable'
+
+    post:
+      operationId: createRetentionPolicy
+      summary: Create a retention policy
+      description: >
+        Creates a new retention policy. The policy `name` must be unique.
+        Returns `409` if a policy with the same name already exists.
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Retention]
+      security:
+        - ReadKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetentionPolicyInput'
+            example:
+              name: debug-7d
+              level: debug
+              older_than_days: 7
+      responses:
+        "201":
+          description: Policy created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionPolicy'
+              example:
+                name: debug-7d
+                level: debug
+                older_than_days: 7
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "503":
+          $ref: '#/components/responses/RetentionUnavailable'
+
+  /api/retention/policies/{name}:
+    get:
+      operationId: getRetentionPolicy
+      summary: Get a single retention policy
+      description: >
+        Returns a single retention policy by name.
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Retention]
+      security:
+        - ReadKey: []
+      parameters:
+        - $ref: '#/components/parameters/PolicyName'
+      responses:
+        "200":
+          description: The requested policy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionPolicy'
+              example:
+                name: debug-7d
+                level: debug
+                older_than_days: 7
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "503":
+          $ref: '#/components/responses/RetentionUnavailable'
+
+    put:
+      operationId: updateRetentionPolicy
+      summary: Update a retention policy
+      description: >
+        Replaces an existing retention policy. The `name` is taken from the path
+        and cannot be changed by the request body.
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Retention]
+      security:
+        - ReadKey: []
+      parameters:
+        - $ref: '#/components/parameters/PolicyName'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetentionPolicyInput'
+            example:
+              level: debug
+              older_than_days: 14
+      responses:
+        "200":
+          description: Policy updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionPolicy'
+              example:
+                name: debug-7d
+                level: debug
+                older_than_days: 14
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "503":
+          $ref: '#/components/responses/RetentionUnavailable'
+
+    delete:
+      operationId: deleteRetentionPolicy
+      summary: Delete a retention policy
+      description: >
+        Permanently removes a retention policy by name.
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Retention]
+      security:
+        - ReadKey: []
+      parameters:
+        - $ref: '#/components/parameters/PolicyName'
+      responses:
+        "204":
+          description: Policy deleted successfully (no body).
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "503":
+          $ref: '#/components/responses/RetentionUnavailable'
+
+  /api/retention/policies/{name}/run:
+    post:
+      operationId: runRetentionPolicy
+      summary: Run a single retention policy
+      description: >
+        Manually triggers execution of one named retention policy.
+        Returns `404` if no policy with the given name exists.
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Retention]
+      security:
+        - ReadKey: []
+      parameters:
+        - $ref: '#/components/parameters/PolicyName'
+      responses:
+        "200":
+          description: Policy ran successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionRunResponse'
+              example:
+                ran_at: "2025-01-15T14:22:00+00:00"
+                policies:
+                  - policy: debug-7d
+                    pruned: 42
+                    files_removed: 3
+                    files_rewritten: 0
+                    dry_run: false
+                    duration_ms: 12
+                    summary: "42 entries pruned, 3 files removed, 0 files rewritten"
+                total_pruned: 42
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "503":
+          $ref: '#/components/responses/RetentionUnavailable'
 
 # ── Tag descriptions ──────────────────────────────────────────────────────────
 tags:
   - name: Logs
     description: Log ingestion and search (both storage modes).
+  - name: Retention
+    description: >
+      Retention policy management and execution.
+      All endpoints require `Authorization: Bearer <UI_SECRET>` and return `503`
+      when retention is not configured on the server.
   - name: System
-    description: Health, diagnostics, and maintenance operations.
+    description: Health check and server diagnostics.
