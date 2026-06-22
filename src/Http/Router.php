@@ -6,8 +6,9 @@ namespace LogService\Http;
 
 use LogService\Auth\WriteAuthInterface;
 use LogService\Models\LogEntry;
-use LogService\Retention\RetentionEngine;
-use LogService\Retention\RetentionResult;
+use LogService\Retention\RetentionPolicy;
+use LogService\Retention\RetentionPolicyRepositoryInterface;
+use LogService\Retention\RetentionRunner;
 use LogService\Storage\StorageInterface;
 use LogService\WebSocket\LogHub;
 use Psr\Http\Message\ServerRequestInterface;
@@ -23,7 +24,7 @@ use React\Http\Message\Response;
  *     MariaDB storage → X-Api-Key: <app_key>  +  X-Api-Token: <api_token>
  *     Delegated to the injected WriteAuthInterface implementation.
  *
- *   Read (GET /api/logs, GET /api/logs/{id}):
+ *   Read (GET /api/logs, GET /api/logs/{id}, GET /api/retention/*):
  *     Always: Authorization: Bearer <UI_SECRET>  (same for both storage modes)
  *
  *   Public (no auth):
@@ -32,12 +33,13 @@ use React\Http\Message\Response;
 final class Router
 {
     public function __construct(
-        private readonly StorageInterface   $storage,
-        private readonly LogHub             $hub,
-        private readonly WriteAuthInterface $writeAuth,
-        private readonly string             $uiSecret,
-        private readonly string             $version         = 'dev',
-        private readonly ?RetentionEngine   $retentionEngine = null,
+        private readonly StorageInterface                    $storage,
+        private readonly LogHub                             $hub,
+        private readonly WriteAuthInterface                 $writeAuth,
+        private readonly string                             $uiSecret,
+        private readonly string                             $version          = 'dev',
+        private readonly ?RetentionRunner                   $retentionRunner  = null,
+        private readonly ?RetentionPolicyRepositoryInterface $policyRepository = null,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -56,23 +58,25 @@ final class Router
             return $this->handleHealth($cors);
         }
 
-        if ($method === 'POST' && $path === '/api/retention/run') {
-            if (!$this->isReadAuthorised($request)) {
-                return $this->json(['error' => 'Unauthorized'], 401, $cors);
-            }
-            return $this->handleRetention($cors);
-        }
-
         if ($method === 'GET' && ($path === '/docs' || $path === '/')) {
             return $this->serveTemplate(__DIR__ . '/../../public/swagger-ui.html', 'text/html');
         }
 
-         if ($method === 'GET' && $path === '/favicon.ico') {
+        if ($method === 'GET' && $path === '/favicon.ico') {
             return $this->serveFile(__DIR__ . '/../../public/favicon.ico', 'image/x-icon');
         }
 
         if ($method === 'GET' && $path === '/openapi.yaml') {
             return $this->serveTemplate(__DIR__ . '/../../public/openapi.yaml', 'application/yaml');
+        }
+
+        // ── Retention policy CRUD ─────────────────────────────────────────────
+
+        if (str_starts_with($path, '/api/retention')) {
+            if (!$this->isReadAuthorised($request)) {
+                return $this->json(['error' => 'Unauthorized'], 401, $cors);
+            }
+            return $this->routeRetention($method, $path, $request, $cors);
         }
 
         // ── Write endpoint ────────────────────────────────────────────────────
@@ -103,7 +107,177 @@ final class Router
     }
 
     // ──────────────────────────────────────────────────────────────────────────
-    // Handlers
+    // Retention routing
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private function routeRetention(
+        string                 $method,
+        string                 $path,
+        ServerRequestInterface $request,
+        array                  $cors,
+    ): Response {
+        // POST /api/retention/run — run all policies
+        if ($method === 'POST' && $path === '/api/retention/run') {
+            return $this->handleRetentionRun(null, $cors);
+        }
+
+        // GET /api/retention/policies — list policies
+        if ($method === 'GET' && $path === '/api/retention/policies') {
+            return $this->handleRetentionList($cors);
+        }
+
+        // POST /api/retention/policies — create policy
+        if ($method === 'POST' && $path === '/api/retention/policies') {
+            return $this->handleRetentionCreate($request, $cors);
+        }
+
+        // GET /api/retention/policies/{name} — get policy
+        if ($method === 'GET' && preg_match('#^/api/retention/policies/([^/]+)$#', $path, $m)) {
+            return $this->handleRetentionGet($m[1], $cors);
+        }
+
+        // PUT /api/retention/policies/{name} — update policy
+        if ($method === 'PUT' && preg_match('#^/api/retention/policies/([^/]+)$#', $path, $m)) {
+            return $this->handleRetentionUpdate($m[1], $request, $cors);
+        }
+
+        // DELETE /api/retention/policies/{name} — delete policy
+        if ($method === 'DELETE' && preg_match('#^/api/retention/policies/([^/]+)$#', $path, $m)) {
+            return $this->handleRetentionDelete($m[1], $cors);
+        }
+
+        // POST /api/retention/policies/{name}/run — run specific policy
+        if ($method === 'POST' && preg_match('#^/api/retention/policies/([^/]+)/run$#', $path, $m)) {
+            return $this->handleRetentionRun($m[1], $cors);
+        }
+
+        return $this->json(['error' => 'Not found'], 404, $cors);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Retention handlers
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private function handleRetentionRun(?string $policyName, array $cors): Response
+    {
+        if ($this->retentionRunner === null) {
+            return $this->json(['error' => 'Retention is not configured'], 503, $cors);
+        }
+
+        try {
+            if ($policyName !== null) {
+                $results = [$this->retentionRunner->runPolicy($policyName)];
+            } else {
+                $results = $this->retentionRunner->runAll();
+            }
+        } catch (\InvalidArgumentException $e) {
+            return $this->json(['error' => $e->getMessage()], 404, $cors);
+        } catch (\Throwable $e) {
+            return $this->json(['error' => $e->getMessage()], 500, $cors);
+        }
+
+        $totalPruned = array_sum(array_map(fn($r) => $r->pruned, $results));
+
+        return $this->json([
+            'ran_at'       => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339),
+            'policies'     => array_map(fn($r) => $r->toArray(), $results),
+            'total_pruned' => $totalPruned,
+        ], 200, $cors);
+    }
+
+    private function handleRetentionList(array $cors): Response
+    {
+        if ($this->policyRepository === null) {
+            return $this->json(['error' => 'Policy repository is not configured'], 503, $cors);
+        }
+
+        $policies = $this->policyRepository->all();
+
+        return $this->json([
+            'policies' => array_map(fn(RetentionPolicy $p) => $this->policyToArray($p), $policies),
+        ], 200, $cors);
+    }
+
+    private function handleRetentionGet(string $name, array $cors): Response
+    {
+        if ($this->policyRepository === null) {
+            return $this->json(['error' => 'Policy repository is not configured'], 503, $cors);
+        }
+
+        $policy = $this->policyRepository->find($name);
+
+        if ($policy === null) {
+            return $this->json(['error' => "Policy '{$name}' not found"], 404, $cors);
+        }
+
+        return $this->json($this->policyToArray($policy), 200, $cors);
+    }
+
+    private function handleRetentionCreate(ServerRequestInterface $request, array $cors): Response
+    {
+        if ($this->policyRepository === null) {
+            return $this->json(['error' => 'Policy repository is not configured'], 503, $cors);
+        }
+
+        $body = json_decode((string) $request->getBody(), true);
+        if (!is_array($body) || empty($body['name'])) {
+            return $this->json(['error' => 'name is required'], 400, $cors);
+        }
+
+        try {
+            $policy = RetentionPolicy::fromArray($body);
+            $this->policyRepository->create($policy);
+        } catch (\RuntimeException $e) {
+            return $this->json(['error' => $e->getMessage()], 409, $cors);
+        } catch (\Throwable $e) {
+            return $this->json(['error' => $e->getMessage()], 400, $cors);
+        }
+
+        return $this->json($this->policyToArray($policy), 201, $cors);
+    }
+
+    private function handleRetentionUpdate(string $name, ServerRequestInterface $request, array $cors): Response
+    {
+        if ($this->policyRepository === null) {
+            return $this->json(['error' => 'Policy repository is not configured'], 503, $cors);
+        }
+
+        $body = json_decode((string) $request->getBody(), true);
+        if (!is_array($body)) {
+            return $this->json(['error' => 'Invalid JSON body'], 400, $cors);
+        }
+
+        $body['name'] = $name;
+
+        try {
+            $policy = RetentionPolicy::fromArray($body);
+            $this->policyRepository->update($policy);
+        } catch (\RuntimeException $e) {
+            return $this->json(['error' => $e->getMessage()], 404, $cors);
+        } catch (\Throwable $e) {
+            return $this->json(['error' => $e->getMessage()], 400, $cors);
+        }
+
+        return $this->json($this->policyToArray($policy), 200, $cors);
+    }
+
+    private function handleRetentionDelete(string $name, array $cors): Response
+    {
+        if ($this->policyRepository === null) {
+            return $this->json(['error' => 'Policy repository is not configured'], 503, $cors);
+        }
+
+        try {
+            $this->policyRepository->delete($name);
+        } catch (\RuntimeException $e) {
+            return $this->json(['error' => $e->getMessage()], 404, $cors);
+        }
+
+        return new Response(204, $cors);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Log handlers
     // ──────────────────────────────────────────────────────────────────────────
 
     private function handleHealth(array $cors): Response
@@ -114,26 +288,6 @@ final class Router
             'ws_connections' => $this->hub->getConnectionCount(),
         ], 200, $cors);
     }
-
-    // ──────────────────────────────────────────────────────────────────────────
-
-    private function handleRetention(array $cors): Response
-    {
-        if ($this->retentionEngine === null) {
-            return $this->json(['error' => 'Retention is not configured'], 503, $cors);
-        }
-
-        $results     = $this->retentionEngine->run();
-        $totalPruned = array_sum(array_map(fn(RetentionResult $r) => $r->pruned, $results));
-
-        return $this->json([
-            'ran_at'       => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339),
-            'policies'     => array_map(fn(RetentionResult $r) => $r->toArray(), $results),
-            'total_pruned' => $totalPruned,
-        ], 200, $cors);
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
 
     /**
      * @param string|null $resolvedAppKey  The app_key surfaced by the auth strategy.
@@ -152,8 +306,6 @@ final class Router
             return $this->json(['error' => 'Invalid JSON body'], 400, $cors);
         }
 
-        // DB auth: the app_key from the clients table is the authoritative value.
-        // Single-key auth: fall back to body / X-App-Key header as before.
         $isSingleKey  = ($resolvedAppKey === '__single_key__' || $resolvedAppKey === null);
         $defaultAppKey = $isSingleKey
             ? ($body['app_key'] ?? $request->getHeaderLine('X-App-Key') ?: null)
@@ -175,8 +327,6 @@ final class Router
         $errors = [];
 
         foreach ($rawLogs as $i => $raw) {
-            // For DB-authenticated requests, enforce the registered app_key —
-            // clients cannot spoof a different application's identity.
             $entryAppKey = $isSingleKey
                 ? ($raw['app_key'] ?? $defaultAppKey)
                 : $resolvedAppKey;
@@ -214,8 +364,6 @@ final class Router
         ], $status, $cors);
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-
     private function handleSearch(ServerRequestInterface $request, array $cors): Response
     {
         $q = $request->getQueryParams();
@@ -239,8 +387,6 @@ final class Router
         return $this->json($this->storage->search($filters, $limit, $offset), 200, $cors);
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-
     private function handleGetById(string $id, array $cors): Response
     {
         $entry = $this->storage->findById($id);
@@ -256,7 +402,20 @@ final class Router
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────
 
-    /** Read-endpoint auth — always Bearer <UI_SECRET>, regardless of storage mode. */
+    private function policyToArray(RetentionPolicy $policy): array
+    {
+        return array_filter([
+            'name'            => $policy->name,
+            'app_key'         => $policy->appKey,
+            'app_id'          => $policy->appId,
+            'level'           => $policy->level,
+            'category'        => $policy->category,
+            'message_regex'   => $policy->messageRegex,
+            'message_glob'    => $policy->messageGlob,
+            'older_than_days' => $policy->olderThanDays,
+        ], fn($v) => $v !== null);
+    }
+
     private function isReadAuthorised(ServerRequestInterface $request): bool
     {
         if (empty($this->uiSecret)) {
@@ -285,7 +444,7 @@ final class Router
     {
         return [
             'Access-Control-Allow-Origin'  => '*',
-            'Access-Control-Allow-Methods' => 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
             'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Api-Key, X-Api-Token, X-App-Key, X-App-Id',
         ];
     }

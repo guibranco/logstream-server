@@ -1,0 +1,31 @@
+{
+  "enabled": false,
+  "interval_hours": 24,
+  "policies": [
+    {
+      "name": "debug-7d",
+      "level": "debug",
+      "older_than_days": 7
+    },
+    {
+      "name": "all-90d",
+      "older_than_days": 90
+    },
+    {
+      "name": "production-info-30d",
+      "app_id": "production",
+      "level": "info",
+      "older_than_days": 30
+    },
+    {
+      "name": "test-app-30d",
+      "app_key": "test-app",
+      "older_than_days": 30
+    },
+    {
+      "name": "hotmail-glob-30d",
+      "message_glob": "*@hotmail.com*",
+      "older_than_days": 30
+    }
+  ]
+}
