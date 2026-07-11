@@ -24,7 +24,6 @@ if [[ "${5:-}" == "--dry-run" ]]; then
 fi
 
 FILES_APPLIED=()
-ERROR=false
 ERROR_MSG=""
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -111,7 +110,6 @@ for FILE in "${PENDING[@]}"; do
     if ! $DRY_RUN; then
         mysql -h "$DB_HOST" -u "$DB_USER" "$DB_NAME" < "$FILE" 2>&1 || {
             ERROR_MSG="Failed to apply $FNAME"
-            ERROR=true
             set_output "error" "true"
             set_output "error_message" "$ERROR_MSG"
             echo "❌ $ERROR_MSG" >&2
