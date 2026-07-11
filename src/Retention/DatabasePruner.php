@@ -27,10 +27,6 @@ final class DatabasePruner implements PrunerInterface
 
         [$conditions, $params] = DatabaseConditionBuilder::build($policy);
 
-        if (empty($conditions)) {
-            return 0;
-        }
-
         $sql  = 'DELETE FROM log_entries WHERE ' . implode(' AND ', $conditions);
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute($params);
