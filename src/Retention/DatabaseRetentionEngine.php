@@ -22,7 +22,7 @@ final class DatabaseRetentionEngine implements RetentionEngineInterface
             );
         }
 
-        [$conditions, $params] = $this->buildConditions($policy);
+        [$conditions, $params] = DatabaseConditionBuilder::build($policy);
 
         if (empty($conditions)) {
             return new RetentionResult(
@@ -61,54 +61,4 @@ final class DatabaseRetentionEngine implements RetentionEngineInterface
         );
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-
-    private function buildConditions(RetentionPolicy $policy): array
-    {
-        $conditions = [];
-        $params     = [];
-
-        if ($policy->olderThanDays !== null) {
-            $conditions[]      = 'timestamp < :cutoff';
-            $params[':cutoff'] = $policy->getCutoffDate()->format('Y-m-d H:i:s');
-        }
-
-        if ($policy->appKey !== null) {
-            $conditions[]       = 'app_key = :app_key';
-            $params[':app_key'] = $policy->appKey;
-        }
-
-        if ($policy->appId !== null) {
-            $conditions[]      = 'app_id = :app_id';
-            $params[':app_id'] = $policy->appId;
-        }
-
-        if ($policy->level !== null) {
-            $conditions[]     = 'level = :level';
-            $params[':level'] = $policy->level;
-        }
-
-        if ($policy->category !== null) {
-            $conditions[]        = 'category = :category';
-            $params[':category'] = $policy->category;
-        }
-
-        if ($policy->messageRegex !== null) {
-            $conditions[]             = 'message REGEXP :message_regex';
-            $params[':message_regex'] = $policy->messageRegex;
-        }
-
-        if ($policy->messageGlob !== null) {
-            $conditions[]            = 'message LIKE :message_glob';
-            $params[':message_glob'] = $this->globToLike($policy->messageGlob);
-        }
-
-        return [$conditions, $params];
-    }
-
-    private function globToLike(string $glob): string
-    {
-        $like = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $glob);
-        return str_replace(['*', '?'], ['%', '_'], $like);
-    }
 }

@@ -15,17 +15,19 @@ jobs:
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 0
 
       - name: 🐘 Setup PHP 8.3
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: "8.3"
           extensions: sockets, pcntl, pdo_mysql, zip
-          coverage: none
+          coverage: pcov
 
       - name: 💾 Cache Composer dependencies
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: /tmp/composer-cache
           key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
@@ -35,7 +37,12 @@ jobs:
         run: composer install --no-interaction --no-progress
 
       - name: 🧪 Run unit tests
-        run: vendor/bin/phpunit --testdox --testsuite unit
+        run: vendor/bin/phpunit --testdox --testsuite unit --coverage-clover=coverage.xml
+
+      - name: 📊 SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@2f77a1ec69fb1d595b06f35ab27e97605bdef703 # v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   # ── 2. Integration tests ──────────────────────────────────────────────────────
   integration_tests:
@@ -46,7 +53,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       - name: 🐳 Build and start containers
         run: API_SECRET=test-secret UI_SECRET=test-ui-secret STORAGE_TYPE=file docker compose up -d --build
@@ -81,18 +88,18 @@ jobs:
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
 
       - name: 🔧 Install GitVersion
-        uses: gittools/actions/gitversion/setup@v4.7.0
+        uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
         with:
           versionSpec: "6.x"
 
       - name: 🏷️ Determine version number
         id: gitversion
-        uses: gittools/actions/gitversion/execute@v4.7.0
+        uses: gittools/actions/gitversion/execute@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
 
   # ── 4. Deploy via SSH (git pull) ──────────────────────────────────────────────
   deploy:
@@ -194,7 +201,7 @@ jobs:
 
   #   steps:
   #     - name: 📥 Checkout code
-  #       uses: actions/checkout@v7
+  #       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
   #       with:
   #         fetch-depth: 0
 
@@ -266,7 +273,7 @@ jobs:
 
     steps:
       - name: 🏷️ Create release
-        uses: ncipollo/release-action@v1.21.0
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
         with:
           skipIfReleaseExists: true
           allowUpdates: false

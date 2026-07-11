@@ -18,19 +18,19 @@ jobs:
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
 
       - name: 🐘 Setup PHP 8.3
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # v2
         with:
           php-version: "8.3"
           extensions: sockets, pcntl, pdo_mysql
-          coverage: none
+          coverage: pcov
 
       - name: 💾 Cache Composer dependencies
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: /tmp/composer-cache
           key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
@@ -42,11 +42,17 @@ jobs:
 
       - name: 🧪 Run unit tests
         id: unit_tests
-        run: vendor/bin/phpunit --testdox --testsuite unit 2>&1 | tee /tmp/phpunit_output.txt
+        run: vendor/bin/phpunit --testdox --testsuite unit --coverage-clover=coverage.xml 2>&1 | tee /tmp/phpunit_output.txt
+
+      - name: 📊 SonarCloud Scan
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: SonarSource/sonarqube-scan-action@2f77a1ec69fb1d595b06f35ab27e97605bdef703 # v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: ❌ Comment on PR – unit tests failed
         if: failure() && steps.unit_tests.outcome == 'failure'
-        uses: mshick/add-pr-comment@v3
+        uses: mshick/add-pr-comment@ec328af66588ab8f77cdeb2c264f14aba45bbf59 # v3
         with:
           refresh-message-position: true
           message-id: unit-tests
@@ -66,7 +72,7 @@ jobs:
 
       - name: ✅ Comment on PR – unit tests passed
         if: success()
-        uses: mshick/add-pr-comment@v3
+        uses: mshick/add-pr-comment@ec328af66588ab8f77cdeb2c264f14aba45bbf59 # v3
         with:
           refresh-message-position: true
           message-id: unit-tests
@@ -87,7 +93,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
 
@@ -135,7 +141,7 @@ jobs:
 
       - name: ❌ Comment on PR – integration tests failed
         if: failure() && steps.endpoint_tests.outputs.error == 'true'
-        uses: mshick/add-pr-comment@v3
+        uses: mshick/add-pr-comment@ec328af66588ab8f77cdeb2c264f14aba45bbf59 # v3
         with:
           refresh-message-position: true
           message-id: integration-tests
@@ -155,7 +161,7 @@ jobs:
 
       - name: ✅ Comment on PR – integration tests passed
         if: success()
-        uses: mshick/add-pr-comment@v3
+        uses: mshick/add-pr-comment@ec328af66588ab8f77cdeb2c264f14aba45bbf59 # v3
         with:
           refresh-message-position: true
           message-id: integration-tests
@@ -176,7 +182,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout code
-        uses: actions/checkout@v7
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 0
 
@@ -186,7 +192,7 @@ jobs:
 
       - name: 🔐 Acquire WireGuard connection lock
         if: github.actor != 'dependabot[bot]'
-        uses: guibranco/github-artifact-lock-action@v3.0.24
+        uses: guibranco/github-artifact-lock-action@6d965a4d06be6a2a8e0aa5583745696c5f23ab46 # v3.0.24
         with:
           lock-name: wireguard-connection
 
@@ -225,13 +231,13 @@ jobs:
 
       - name: 🔑 Release WireGuard connection lock
         if: always() && github.actor != 'dependabot[bot]'
-        uses: guibranco/github-artifact-lock-action/release-lock@v3.0.24
+        uses: guibranco/github-artifact-lock-action/release-lock@6d965a4d06be6a2a8e0aa5583745696c5f23ab46 # v3.0.24
         with:
           lock-name: wireguard-connection
 
       - name: ❌ Comment on PR – migration dry run failed
         if: failure() && steps.dry_run.outputs.error == 'true' && github.actor != 'dependabot[bot]'
-        uses: mshick/add-pr-comment@v3
+        uses: mshick/add-pr-comment@ec328af66588ab8f77cdeb2c264f14aba45bbf59 # v3
         with:
           refresh-message-position: true
           message-id: migration-dry-run
@@ -244,7 +250,7 @@ jobs:
 
       - name: 🚀 Comment on PR – migrations pending
         if: steps.dry_run.outputs.files != '' && github.actor != 'dependabot[bot]'
-        uses: mshick/add-pr-comment@v3
+        uses: mshick/add-pr-comment@ec328af66588ab8f77cdeb2c264f14aba45bbf59 # v3
         with:
           refresh-message-position: true
           message-id: migration-dry-run
@@ -257,7 +263,7 @@ jobs:
 
       - name: ✅ Comment on PR – no new migrations
         if: steps.dry_run.outputs.files == '' && github.actor != 'dependabot[bot]'
-        uses: mshick/add-pr-comment@v3
+        uses: mshick/add-pr-comment@ec328af66588ab8f77cdeb2c264f14aba45bbf59 # v3
         with:
           refresh-message-position: true
           message-id: migration-dry-run

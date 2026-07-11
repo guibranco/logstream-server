@@ -34,11 +34,11 @@ final class FileStoragePruner implements PrunerInterface
 
         $pruned = 0;
 
-        foreach ($this->listDayFiles() as [$fileDate, $filePath]) {
+        foreach (JsonlDayFileScanner::listDayFiles($this->basePath) as [$fileDate, $filePath]) {
             $pruned += $this->pruneFile($fileDate, $filePath, $policy);
         }
 
-        $this->cleanEmptyDirs($this->basePath);
+        JsonlDayFileScanner::pruneEmptyDirectories($this->basePath);
 
         return $pruned;
     }
@@ -64,7 +64,7 @@ final class FileStoragePruner implements PrunerInterface
             // Every entry in this file predates the cutoff and there are no
             // field filters to check: delete the whole file in one go.
             if ($nextDayMidnight <= $cutoff && !$policy->hasFieldFilters()) {
-                $count = $this->countNonEmptyLines($filePath);
+                $count = JsonlDayFileScanner::countNonEmptyLines($filePath);
                 @unlink($filePath);
                 return $count;
             }
@@ -118,84 +118,4 @@ final class FileStoragePruner implements PrunerInterface
         return $pruned;
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-    // Helpers
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Yields [\DateTimeImmutable $date, string $path] for every *.jsonl file.
-     *
-     * @return array<int, array{\DateTimeImmutable, string}>
-     */
-    private function listDayFiles(): array
-    {
-        $files = [];
-
-        if (!is_dir($this->basePath)) {
-            return $files;
-        }
-
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($this->basePath, \FilesystemIterator::SKIP_DOTS),
-        );
-
-        foreach ($iterator as $file) {
-            if ($file->getExtension() !== 'jsonl') {
-                continue;
-            }
-
-            // Expect path ending in YYYY/MM/DD.jsonl (forward or back slash)
-            if (!preg_match('#(\d{4})[/\\\\](\d{2})[/\\\\](\d{2})\.jsonl$#', $file->getPathname(), $m)) {
-                continue;
-            }
-
-            $files[] = [
-                new \DateTimeImmutable("{$m[1]}-{$m[2]}-{$m[3]}"),
-                $file->getPathname(),
-            ];
-        }
-
-        return $files;
-    }
-
-    private function countNonEmptyLines(string $filePath): int
-    {
-        $handle = @fopen($filePath, 'r');
-        if (!$handle) {
-            return 0;
-        }
-        $count = 0;
-        while (($line = fgets($handle)) !== false) {
-            if (trim($line) !== '') {
-                $count++;
-            }
-        }
-        fclose($handle);
-        return $count;
-    }
-
-    private function cleanEmptyDirs(string $dir): void
-    {
-        if (!is_dir($dir)) {
-            return;
-        }
-        foreach ((array) scandir($dir) as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            $path = $dir . DIRECTORY_SEPARATOR . $item;
-            if (is_dir($path)) {
-                $this->cleanEmptyDirs($path);
-                if ($this->isDirEmpty($path)) {
-                    @rmdir($path);
-                }
-            }
-        }
-    }
-
-    private function isDirEmpty(string $dir): bool
-    {
-        $entries = scandir($dir);
-        return $entries !== false && count($entries) === 2; // only '.' and '..'
-    }
 }
