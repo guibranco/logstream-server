@@ -248,6 +248,29 @@ final class FileStorageTest extends TestCase
         self::assertSame(2, $result['total']);
     }
 
+    #[Test]
+    public function it_excludes_entries_with_an_unparseable_stored_timestamp_when_filtering_by_date_from(): void
+    {
+        $this->writeRawLine('2024/01/01', ['id' => '01A', 'timestamp' => 'not-a-real-date']);
+
+        $result = $this->storage->search([
+            'date_from' => '2023-12-31T00:00:00.000Z',
+            'date_to'   => '2024-01-02T00:00:00.000Z',
+        ]);
+
+        self::assertSame(0, $result['total']);
+    }
+
+    #[Test]
+    public function it_excludes_entries_with_an_unparseable_stored_timestamp_when_filtering_by_date_to(): void
+    {
+        $this->writeRawLine('2024/01/01', ['id' => '01A', 'timestamp' => 'not-a-real-date']);
+
+        $result = $this->storage->search(['date_to' => '2024-01-02T00:00:00.000Z']);
+
+        self::assertSame(0, $result['total']);
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // search() — pagination
     // ──────────────────────────────────────────────────────────────────────────
@@ -291,6 +314,14 @@ final class FileStorageTest extends TestCase
     // ──────────────────────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────
+
+    /** Writes a raw JSON line directly, bypassing save()'s LogEntry validation. */
+    private function writeRawLine(string $relativePath, array $entry): void
+    {
+        $path = $this->tmpDir . '/' . $relativePath . '.jsonl';
+        @mkdir(dirname($path), 0755, true);
+        file_put_contents($path, json_encode($entry, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n");
+    }
 
     private function makeEntry(
         string $id,
