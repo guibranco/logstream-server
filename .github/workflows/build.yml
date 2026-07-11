@@ -27,7 +27,7 @@ jobs:
         with:
           php-version: "8.3"
           extensions: sockets, pcntl, pdo_mysql
-          coverage: none
+          coverage: pcov
 
       - name: 💾 Cache Composer dependencies
         uses: actions/cache@v6
@@ -42,7 +42,13 @@ jobs:
 
       - name: 🧪 Run unit tests
         id: unit_tests
-        run: vendor/bin/phpunit --testdox --testsuite unit 2>&1 | tee /tmp/phpunit_output.txt
+        run: vendor/bin/phpunit --testdox --testsuite unit --coverage-clover=coverage.xml 2>&1 | tee /tmp/phpunit_output.txt
+
+      - name: 📊 SonarCloud Scan
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: ❌ Comment on PR – unit tests failed
         if: failure() && steps.unit_tests.outcome == 'failure'

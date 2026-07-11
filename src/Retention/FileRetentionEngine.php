@@ -42,7 +42,7 @@ final class FileRetentionEngine implements RetentionEngineInterface
         $cutoff     = $policy->getCutoffDate();
         $cutoffDate = $cutoff?->format(\DateTimeInterface::RFC3339);
 
-        foreach ($this->listDayFiles() as [$fileDate, $filePath]) {
+        foreach (JsonlDayFileScanner::listDayFiles($this->basePath) as [$fileDate, $filePath]) {
             $filesScanned++;
             try {
                 [$d, $fr, $frw] = $this->processFile($fileDate, $filePath, $policy, $dryRun);
@@ -63,7 +63,7 @@ final class FileRetentionEngine implements RetentionEngineInterface
         }
 
         if (!$dryRun) {
-            $this->pruneEmptyDirectories($this->basePath);
+            JsonlDayFileScanner::pruneEmptyDirectories($this->basePath);
         }
 
         $durationMs   = (int) ((hrtime(true) - $start) / 1_000_000);
@@ -111,7 +111,7 @@ final class FileRetentionEngine implements RetentionEngineInterface
             }
 
             if ($nextDayMidnight <= $cutoff && !$policy->hasFieldFilters()) {
-                $count = $this->countNonEmptyLines($filePath);
+                $count = JsonlDayFileScanner::countNonEmptyLines($filePath);
                 if (!$dryRun) {
                     @unlink($filePath);
                 }
@@ -175,79 +175,4 @@ final class FileRetentionEngine implements RetentionEngineInterface
         return [$deleted, empty($kept) ? 1 : 0, empty($kept) ? 0 : 1];
     }
 
-    // ──────────────────────────────────────────────────────────────────────────
-
-    /**
-     * @return array<int, array{\DateTimeImmutable, string}>
-     */
-    private function listDayFiles(): array
-    {
-        $files = [];
-
-        if (!is_dir($this->basePath)) {
-            return $files;
-        }
-
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($this->basePath, \FilesystemIterator::SKIP_DOTS),
-        );
-
-        foreach ($iterator as $file) {
-            if ($file->getExtension() !== 'jsonl') {
-                continue;
-            }
-
-            if (!preg_match('#(\d{4})[/\\\\](\d{2})[/\\\\](\d{2})\.jsonl$#', $file->getPathname(), $m)) {
-                continue;
-            }
-
-            $files[] = [
-                new \DateTimeImmutable("{$m[1]}-{$m[2]}-{$m[3]}"),
-                $file->getPathname(),
-            ];
-        }
-
-        return $files;
-    }
-
-    private function countNonEmptyLines(string $filePath): int
-    {
-        $handle = @fopen($filePath, 'r');
-        if (!$handle) {
-            return 0;
-        }
-        $count = 0;
-        while (($line = fgets($handle)) !== false) {
-            if (trim($line) !== '') {
-                $count++;
-            }
-        }
-        fclose($handle);
-        return $count;
-    }
-
-    private function pruneEmptyDirectories(string $dir): void
-    {
-        if (!is_dir($dir)) {
-            return;
-        }
-        foreach ((array) scandir($dir) as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            $path = $dir . DIRECTORY_SEPARATOR . $item;
-            if (is_dir($path)) {
-                $this->pruneEmptyDirectories($path);
-                if ($this->isDirEmpty($path)) {
-                    @rmdir($path);
-                }
-            }
-        }
-    }
-
-    private function isDirEmpty(string $dir): bool
-    {
-        $entries = scandir($dir);
-        return $entries !== false && count($entries) === 2;
-    }
 }

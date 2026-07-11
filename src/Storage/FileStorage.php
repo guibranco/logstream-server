@@ -199,30 +199,26 @@ final class FileStorage implements StorageInterface
             }
         }
 
-        if (!empty($filters['date_from'])) {
-            try {
-                $entryTs  = new \DateTimeImmutable($entry['timestamp'] ?? 'now');
-                $filterTs = new \DateTimeImmutable($filters['date_from']);
-                if ($entryTs < $filterTs) {
-                    return false;
-                }
-            } catch (\Throwable) {
-                return false;
-            }
+        if (!empty($filters['date_from']) && !$this->withinBound($entry, $filters['date_from'], before: false)) {
+            return false;
         }
 
-        if (!empty($filters['date_to'])) {
-            try {
-                $entryTs  = new \DateTimeImmutable($entry['timestamp'] ?? 'now');
-                $filterTs = new \DateTimeImmutable($filters['date_to']);
-                if ($entryTs > $filterTs) {
-                    return false;
-                }
-            } catch (\Throwable) {
-                return false;
-            }
+        if (!empty($filters['date_to']) && !$this->withinBound($entry, $filters['date_to'], before: true)) {
+            return false;
         }
 
         return true;
+    }
+
+    /** True if the entry's timestamp is on the correct side of the given bound. */
+    private function withinBound(array $entry, string $bound, bool $before): bool
+    {
+        try {
+            $entryTs = new \DateTimeImmutable($entry['timestamp'] ?? 'now');
+            $boundTs = new \DateTimeImmutable($bound);
+            return $before ? $entryTs <= $boundTs : $entryTs >= $boundTs;
+        } catch (\Throwable) {
+            return false;
+        }
     }
 }

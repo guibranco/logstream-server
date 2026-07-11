@@ -16,13 +16,15 @@ jobs:
     steps:
       - name: 📥 Checkout code
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: 🐘 Setup PHP 8.3
         uses: shivammathur/setup-php@v2
         with:
           php-version: "8.3"
           extensions: sockets, pcntl, pdo_mysql, zip
-          coverage: none
+          coverage: pcov
 
       - name: 💾 Cache Composer dependencies
         uses: actions/cache@v6
@@ -35,7 +37,12 @@ jobs:
         run: composer install --no-interaction --no-progress
 
       - name: 🧪 Run unit tests
-        run: vendor/bin/phpunit --testdox --testsuite unit
+        run: vendor/bin/phpunit --testdox --testsuite unit --coverage-clover=coverage.xml
+
+      - name: 📊 SonarCloud Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
   # ── 2. Integration tests ──────────────────────────────────────────────────────
   integration_tests:
