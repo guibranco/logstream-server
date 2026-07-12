@@ -33,6 +33,18 @@ final class FileRetentionEngineTest extends TestCase
     // ──────────────────────────────────────────────────────────────────────────
 
     #[Test]
+    public function it_reports_a_missing_log_directory(): void
+    {
+        $engine = new FileRetentionEngine($this->tmpDir . '/does-not-exist');
+
+        $result = $engine->purge(RetentionPolicy::fromArray(['name' => 'x', 'older_than_days' => 7]));
+
+        self::assertSame(0, $result->pruned);
+        self::assertNotEmpty($result->warnings);
+        self::assertStringContainsString('not found', $result->summary);
+    }
+
+    #[Test]
     public function it_returns_zero_for_empty_policy(): void
     {
         $this->writeEntries('2020/01/01', [$this->makeEntry('2020-01-01T00:00:00.000Z')]);
@@ -158,6 +170,39 @@ final class FileRetentionEngineTest extends TestCase
         self::assertFileExists($this->tmpDir . '/2020/01/01.jsonl');
     }
 
+    #[Test]
+    public function it_reports_a_would_be_rewrite_in_dry_run_with_a_field_filter(): void
+    {
+        $this->writeEntries('2020/01/01', [
+            $this->makeEntry('2020-01-01T00:00:00.000Z', level: 'debug'),
+            $this->makeEntry('2020-01-01T01:00:00.000Z', level: 'info'),
+        ]);
+
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'level' => 'debug']);
+        $result = $this->engine->purge($policy, dryRun: true);
+
+        self::assertSame(1, $result->pruned);
+        self::assertSame(0, $result->filesRemoved);
+        self::assertSame(1, $result->filesRewritten);
+        self::assertCount(2, $this->readEntries('2020/01/01'));
+    }
+
+    #[Test]
+    public function it_reports_a_would_be_removal_in_dry_run_when_all_entries_match(): void
+    {
+        $this->writeEntries('2020/01/01', [
+            $this->makeEntry('2020-01-01T00:00:00.000Z', level: 'debug'),
+        ]);
+
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'level' => 'debug']);
+        $result = $this->engine->purge($policy, dryRun: true);
+
+        self::assertSame(1, $result->pruned);
+        self::assertSame(1, $result->filesRemoved);
+        self::assertSame(0, $result->filesRewritten);
+        self::assertFileExists($this->tmpDir . '/2020/01/01.jsonl');
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Multiple files
     // ──────────────────────────────────────────────────────────────────────────
@@ -200,4 +245,45 @@ final class FileRetentionEngineTest extends TestCase
         self::assertNotEmpty($result->summary);
     }
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // Robustness
+    // ──────────────────────────────────────────────────────────────────────────
+
+    #[Test]
+    public function it_treats_an_unopenable_file_as_untouched(): void
+    {
+        // A directory masquerading as "15.jsonl" matches the day-file pattern
+        // but fopen() on it fails, exercising the "can't open" guard.
+        mkdir($this->tmpDir . '/2020/01/15.jsonl', 0755, true);
+
+        $result = $this->engine->purge(RetentionPolicy::fromArray(['name' => 'x', 'level' => 'debug']));
+
+        self::assertSame(0, $result->pruned);
+        self::assertSame(0, $result->filesRemoved);
+        self::assertSame(0, $result->filesRewritten);
+    }
+
+    #[Test]
+    public function it_captures_a_per_file_error_and_continues(): void
+    {
+        $this->writeEntries('2020/01/01', [$this->makeEntry('2020-01-01T00:00:00.000Z')]);
+
+        set_error_handler(static function (int $errno, string $errstr): bool {
+            throw new \ErrorException($errstr, 0, $errno);
+        }, E_WARNING);
+
+        try {
+            $policy = RetentionPolicy::fromArray([
+                'name'          => 'x',
+                'message_regex' => '(unterminated',
+            ]);
+            $result = $this->engine->purge($policy);
+        } finally {
+            restore_error_handler();
+        }
+
+        self::assertSame(0, $result->pruned);
+        self::assertNotEmpty($result->warnings);
+        self::assertStringContainsString('Error processing', $result->warnings[0]);
+    }
 }
