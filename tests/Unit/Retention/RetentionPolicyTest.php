@@ -145,6 +145,16 @@ final class RetentionPolicyTest extends TestCase
         self::assertFalse($policy->matchesEntry($entry));
     }
 
+    #[Test]
+    public function it_does_not_match_entry_with_a_missing_timestamp(): void
+    {
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'older_than_days' => 7]);
+        $entry  = $this->makeEntry();
+        unset($entry['timestamp']);
+
+        self::assertFalse($policy->matchesEntry($entry));
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // matchesEntry — field filters
     // ──────────────────────────────────────────────────────────────────────────

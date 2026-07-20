@@ -247,6 +247,26 @@ final class ClientRepositoryTest extends TestCase
         $this->repo->delete('nonexistent');
     }
 
+    #[Test]
+    public function delete_rolls_back_and_wraps_the_exception_on_failure(): void
+    {
+        $this->repo->create('My App', 'my-app');
+
+        // Force the DELETE FROM log_entries statement inside the transaction to fail.
+        $this->pdo->exec('DROP TABLE log_entries');
+
+        try {
+            $this->repo->delete('my-app');
+            self::fail('Expected a RuntimeException.');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString("Failed to delete client 'my-app'", $e->getMessage());
+            self::assertInstanceOf(\PDOException::class, $e->getPrevious());
+        }
+
+        self::assertFalse($this->pdo->inTransaction());
+        self::assertNotNull($this->repo->findByKey('my-app'), 'client should survive a rolled-back delete');
+    }
+
     // ── toPublicArray / toCreatedArray ────────────────────────────────────────
 
     #[Test]

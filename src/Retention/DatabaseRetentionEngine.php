@@ -24,16 +24,6 @@ final class DatabaseRetentionEngine implements RetentionEngineInterface
 
         [$conditions, $params] = DatabaseConditionBuilder::build($policy);
 
-        if (empty($conditions)) {
-            return new RetentionResult(
-                policy:     $policy->name,
-                pruned:     0,
-                dryRun:     $dryRun,
-                durationMs: 0,
-                summary:    'No conditions built — nothing to do',
-            );
-        }
-
         $whereClause = implode(' AND ', $conditions);
 
         if ($dryRun) {

@@ -236,4 +236,38 @@ final class FileStoragePrunerTest extends TestCase
         self::assertFileExists($this->tmpDir . '/2099/12/31.jsonl');
     }
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // Robustness
+    // ──────────────────────────────────────────────────────────────────────────
+
+    #[Test]
+    public function it_skips_a_day_file_that_cannot_be_opened(): void
+    {
+        // A directory masquerading as "15.jsonl" matches the day-file pattern
+        // but fopen() on it fails, exercising the "can't open" guard.
+        mkdir($this->tmpDir . '/2020/01/15.jsonl', 0755, true);
+
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'app_key' => 'target-app']);
+        $count  = $this->pruner->prune($policy);
+
+        self::assertSame(0, $count);
+    }
+
+    #[Test]
+    public function it_preserves_corrupt_non_json_lines_unchanged(): void
+    {
+        $path = $this->tmpDir . '/2020/01/01.jsonl';
+        @mkdir(dirname($path), 0755, true);
+        file_put_contents(
+            $path,
+            json_encode($this->makeEntry('2020-01-01T00:00:00.000Z', appKey: 'target-app')) . "\n"
+            . "not valid json\n",
+        );
+
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'app_key' => 'target-app']);
+        $count  = $this->pruner->prune($policy);
+
+        self::assertSame(1, $count);
+        self::assertSame("not valid json\n", file_get_contents($path));
+    }
 }

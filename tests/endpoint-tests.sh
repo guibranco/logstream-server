@@ -159,8 +159,8 @@ SAVED=$(json_field "$(cat /tmp/ls_ingest_body.json)" "saved")
 assert_json_field "saved == 1" "1" "$SAVED"
 
 # Extract the IDs for later assertions
-ENTRY_ID=$(cat /tmp/ls_ingest_body.json | grep -oP '"id":\s*"\K[^"]+' | head -1)
-TRACE_ID=$(cat /tmp/ls_ingest_body.json | grep -oP '"trace_id":\s*"\K[^"]+' | head -1)
+ENTRY_ID=$(grep -oP '"id":\s*"\K[^"]+' /tmp/ls_ingest_body.json | head -1)
+TRACE_ID=$(grep -oP '"trace_id":\s*"\K[^"]+' /tmp/ls_ingest_body.json | head -1)
 
 # ── 4. Ingest – batch ─────────────────────────────────────────────────────────
 
