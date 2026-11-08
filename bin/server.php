@@ -9,6 +9,7 @@ use Dotenv\Dotenv;
 use LogService\Auth\DatabaseWriteAuth;
 use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Database\Connection;
+use LogService\Http\ClientIpResolver;
 use LogService\Http\Router;
 use LogService\Repository\ClientRepository;
 use LogService\Retention\DatabaseRetentionEngine;
@@ -40,6 +41,7 @@ $wsPort      = (int)($_ENV['WS_PORT']   ?? 8080);
 $apiSecret   = $_ENV['API_SECRET']   ?? '';
 $uiSecret    = $_ENV['UI_SECRET']    ?? '';
 $appVersion  = $_ENV['APP_VERSION']  ?? 'dev';
+$ipResolver  = ClientIpResolver::fromString($_ENV['TRUSTED_PROXIES'] ?? '');
 
 // ─── Storage + Write Auth ─────────────────────────────────────────────────────
 
@@ -148,6 +150,7 @@ $router = new Router(
     policyRepository: $policyRepository,
     clientRepository: $clientRepository,
     writeAuthDb:      $writeAuthDb,
+    ipResolver:       $ipResolver,
 );
 
 $httpServer = new HttpServer(

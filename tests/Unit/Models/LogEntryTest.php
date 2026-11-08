@@ -182,6 +182,33 @@ final class LogEntryTest extends TestCase
         self::assertInstanceOf(\DateTimeImmutable::class, $entry->timestamp);
     }
 
+    #[Test]
+    public function it_round_trips_the_sender_ip(): void
+    {
+        $entry = LogEntry::fromArray(array_merge($this->fixture(), ['sender_ip' => '203.0.113.7']));
+
+        self::assertSame('203.0.113.7', $entry->senderIp);
+        self::assertSame('203.0.113.7', $entry->toArray()['sender_ip']);
+    }
+
+    #[Test]
+    public function it_defaults_sender_ip_to_null_for_legacy_entries(): void
+    {
+        $entry = LogEntry::fromArray($this->fixture());
+
+        self::assertNull($entry->senderIp);
+        self::assertArrayHasKey('sender_ip', $entry->toArray());
+        self::assertNull($entry->toArray()['sender_ip']);
+    }
+
+    #[Test]
+    public function it_discards_an_invalid_sender_ip(): void
+    {
+        $entry = LogEntry::fromArray(array_merge($this->fixture(), ['sender_ip' => 'not-an-ip']));
+
+        self::assertNull($entry->senderIp);
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────

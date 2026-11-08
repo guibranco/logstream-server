@@ -118,6 +118,7 @@ curl -s -X POST http://localhost:8081/api/logs \
 | `user_agent` | string | ❌ | Captured from the `User-Agent` header automatically |
 | `context` | object | ❌ | Arbitrary JSON payload |
 | `timestamp` | ISO 8601 | ❌ | When the event occurred; defaults to server receive time |
+| `sender_ip` | string | — | Set by the server to the client's IP address; cannot be supplied. Behind a reverse proxy, set `TRUSTED_PROXIES` |
 
 ### Batch ingestion
 
@@ -148,6 +149,7 @@ Send multiple entries in one request by placing them in a `logs` array. Fields s
 | `user_agent` | Partial match |
 | `trace_id` | Exact match |
 | `batch_id` | Exact match |
+| `sender_ip` | Exact match |
 | `date_from` | ISO 8601 — inclusive lower bound |
 | `date_to` | ISO 8601 — inclusive upper bound |
 | `search` | Substring match on `message` |
