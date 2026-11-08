@@ -233,6 +233,10 @@ jobs:
           DB_NAME: ${{ secrets.MARIADB_DATABASE }}
           DB_USER: ${{ secrets.MARIADB_USER }}
           DB_PASS: ${{ secrets.MARIADB_PASSWORD }}
+          # Nginx on the same host proxies every request, so without this all
+          # entries record sender_ip=127.0.0.1. Override with the repository
+          # variable TRUSTED_PROXIES if the proxy topology changes (e.g. a CDN).
+          TRUSTED_PROXIES: ${{ vars.TRUSTED_PROXIES || '127.0.0.1,::1' }}
         run: |
           umask 077
           cat > .env.deploy <<EOF
@@ -241,6 +245,7 @@ jobs:
           API_SECRET=$API_SECRET
           UI_SECRET=$UI_SECRET
           APP_VERSION=$APP_VERSION
+          TRUSTED_PROXIES=$TRUSTED_PROXIES
           RETENTION_CONFIG=./retention.json
           STORAGE_TYPE=mariadb
           LOG_PATH=./storage/logs
