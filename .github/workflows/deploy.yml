@@ -190,8 +190,14 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
         run: |
           mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
+          # Strip a UTF-8 BOM and CRs in case the secret was saved from Windows;
+          # either one makes OpenSSH fail with "error in libcrypto".
+          umask 077
+          printf '%s\n' "$SSH_PRIVATE_KEY" | sed '1s/^\xEF\xBB\xBF//' | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          # Fail early with a clear message if the key still can't be parsed
+          ssh-keygen -y -f ~/.ssh/deploy_key > /dev/null \
+            || { echo "❌ SSH_PRIVATE_KEY is not a valid private key"; exit 1; }
           ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           cat > ~/.ssh/config <<EOF
           Host server
