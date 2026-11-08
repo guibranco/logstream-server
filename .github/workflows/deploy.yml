@@ -133,7 +133,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends wireguard wireguard-tools resolvconf
           # Ubuntu 26's AppArmor profile only lets wg-quick read /etc/wireguard
-          printf '%s\n' "$WIREGUARD_CONFIG" | sudo install -m 600 /dev/stdin /etc/wireguard/wg0.conf
+          # Strip CRs in case the secret was saved with Windows line endings
+          printf '%s\n' "$WIREGUARD_CONFIG" | tr -d '\r' | sudo install -m 600 /dev/stdin /etc/wireguard/wg0.conf
           sudo modprobe wireguard
           sudo wg-quick up wg0
 
@@ -150,7 +151,7 @@ jobs:
         if: always() && env.WIREGUARD_CONNECTED == 'true'
         shell: bash
         run: |
-          sudo wg-quick down wg0
+          if ip link show wg0 >/dev/null 2>&1; then sudo wg-quick down wg0; fi
           sudo rm -f /etc/wireguard/wg0.conf
 
       - name: 🔓 Release WireGuard connection lock
