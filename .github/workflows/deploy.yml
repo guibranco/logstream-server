@@ -5,6 +5,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Only one deploy at a time: a new run waits for the in-progress one to finish
+# instead of cancelling it. GitHub keeps at most one pending run per group, so
+# if several pushes queue up, only the latest is deployed.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
 
   # ── 1. Unit tests ─────────────────────────────────────────────────────────────
