@@ -174,7 +174,7 @@ final class FileStorage implements StorageInterface
                 || $entry['trace_id'] === $filters['_id_or_trace'];
         }
 
-        $exact = ['app_key', 'app_id', 'level', 'trace_id', 'batch_id'];
+        $exact = ['app_key', 'app_id', 'level', 'trace_id', 'batch_id', 'sender_ip'];
         foreach ($exact as $field) {
             if (!empty($filters[$field]) && ($entry[$field] ?? '') !== $filters[$field]) {
                 return false;

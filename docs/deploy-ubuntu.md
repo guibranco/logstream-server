@@ -153,6 +153,9 @@ UI_SECRET=<generate-another-strong-secret>
 # Storage: "file" needs no extra setup; "mariadb" requires the DB section below
 STORAGE_TYPE=file
 LOG_PATH=./storage/logs
+
+# Nginx on this host proxies requests — trust it so sender_ip records the real client
+TRUSTED_PROXIES=127.0.0.1,::1
 ```
 
 Generate strong secrets with:

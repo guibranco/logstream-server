@@ -183,6 +183,17 @@ components:
           format: date-time
           description: When the server persisted the entry.
           example: "2025-01-15T14:22:00.012Z"
+        sender_ip:
+          type: string
+          nullable: true
+          description: >
+            IP address (IPv4 or IPv6) of the client that sent the entry,
+            captured by the server from the connection. Cannot be set by the
+            client. When `TRUSTED_PROXIES` is configured and the request arrives
+            through one of those proxies, the original client address is taken
+            from `X-Forwarded-For` (or `X-Real-IP`). `null` for entries stored
+            before this field existed.
+          example: 203.0.113.7
 
     Client:
       type: object
@@ -722,6 +733,13 @@ components:
       description: Filter by batch ID (exact match).
       example: 550e8400-e29b-41d4-a716-446655440000
 
+    SenderIp:
+      name: sender_ip
+      in: query
+      schema: { type: string }
+      description: Filter by the sender's IP address (exact match).
+      example: 203.0.113.7
+
     DateFrom:
       name: date_from
       in: query
@@ -929,7 +947,8 @@ paths:
         top level and list entries under the `logs` array key.
 
         The `User-Agent` header is captured automatically as the `user_agent`
-        field of every entry in the request.
+        field of every entry in the request, and the client's IP address is
+        recorded as `sender_ip` (a `sender_ip` in the body is ignored).
 
         ---
 
@@ -1050,6 +1069,7 @@ paths:
         - $ref: '#/components/parameters/Category'
         - $ref: '#/components/parameters/TraceId'
         - $ref: '#/components/parameters/BatchId'
+        - $ref: '#/components/parameters/SenderIp'
         - $ref: '#/components/parameters/DateFrom'
         - $ref: '#/components/parameters/DateTo'
         - $ref: '#/components/parameters/Search'

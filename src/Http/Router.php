@@ -45,6 +45,7 @@ final class Router
         private readonly ?RetentionPolicyRepositoryInterface $policyRepository  = null,
         private readonly ?ClientRepository                   $clientRepository  = null,
         private readonly ?CacheFlushableInterface            $writeAuthDb       = null,
+        private readonly ClientIpResolver                    $ipResolver        = new ClientIpResolver(),
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -376,6 +377,8 @@ final class Router
         $topAppId     = $body['app_id']   ?? $request->getHeaderLine('X-App-Id')   ?: null;
         $topUserAgent = $request->getHeaderLine('User-Agent') ?: ($body['user_agent'] ?? null);
         $topBatchId   = $body['batch_id'] ?? null;
+        // Always taken from the connection, never from the body, so clients can't spoof it.
+        $senderIp     = $this->ipResolver->resolve($request);
 
         if (!$defaultAppKey || !$topAppId) {
             return $this->json(['error' => 'app_key and app_id are required'], 400, $cors);
@@ -407,6 +410,7 @@ final class Router
                     'context'    => $raw['context']    ?? null,
                     'timestamp'  => $raw['timestamp']  ?? (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339_EXTENDED),
                     'created_at' => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339_EXTENDED),
+                    'sender_ip'  => $senderIp,
                 ]);
 
                 $this->storage->save($entry);
@@ -438,6 +442,7 @@ final class Router
             'category'   => $q['category']   ?? null,
             'trace_id'   => $q['trace_id']   ?? null,
             'batch_id'   => $q['batch_id']   ?? null,
+            'sender_ip'  => $q['sender_ip']  ?? null,
             'date_from'  => $q['date_from']  ?? null,
             'date_to'    => $q['date_to']    ?? null,
             'search'     => $q['search']     ?? null,

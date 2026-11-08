@@ -27,10 +27,10 @@ final class MariaDBStorage implements StorageInterface
         $sql = <<<SQL
             INSERT INTO log_entries
                 (id, trace_id, batch_id, app_key, app_id,
-                 user_agent, level, category, message, context, timestamp)
+                 user_agent, sender_ip, level, category, message, context, timestamp)
             VALUES
                 (:id, :trace_id, :batch_id, :app_key, :app_id,
-                 :user_agent, :level, :category, :message, :context, :timestamp)
+                 :user_agent, :sender_ip, :level, :category, :message, :context, :timestamp)
         SQL;
 
         $stmt = $this->pdo->prepare($sql);
@@ -41,6 +41,7 @@ final class MariaDBStorage implements StorageInterface
             ':app_key'    => $entry->appKey,
             ':app_id'     => $entry->appId,
             ':user_agent' => $entry->userAgent,
+            ':sender_ip'  => $entry->senderIp,
             ':level'      => $entry->level,
             ':category'   => $entry->category,
             ':message'    => $entry->message,
@@ -111,6 +112,7 @@ final class MariaDBStorage implements StorageInterface
             'level'    => ':level',
             'trace_id' => ':trace_id',
             'batch_id' => ':batch_id',
+            'sender_ip' => ':sender_ip',
         ];
 
         foreach ($exact as $col => $placeholder) {

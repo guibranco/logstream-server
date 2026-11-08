@@ -15,7 +15,8 @@ interface StorageInterface
      *
      * Supported $filters keys:
      *   app_key, app_id, user_agent, level, category,
-     *   trace_id, batch_id, date_from, date_to, search (full-text on message)
+     *   trace_id, batch_id, sender_ip, date_from, date_to,
+     *   search (full-text on message)
      *
      * @return array{total: int, limit: int, offset: int, entries: list<array>}
      */
