@@ -200,14 +200,16 @@ jobs:
         if: github.actor != 'dependabot[bot]'
         timeout-minutes: 5
         shell: bash
+        env:
+          WIREGUARD_CONFIG: ${{ secrets.WIREGUARD_CONFIG }}
         run: |
-          echo "WIREGUARD_CONNECTED=true" >> $GITHUB_ENV
+          echo "WIREGUARD_CONNECTED=true" >> "$GITHUB_ENV"
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends wireguard wireguard-tools resolvconf
-          echo "${{ secrets.WIREGUARD_CONFIG }}" > wg0.conf
-          sudo chmod 600 wg0.conf
+          # Ubuntu 26's AppArmor profile only lets wg-quick read /etc/wireguard
+          printf '%s\n' "$WIREGUARD_CONFIG" | sudo install -m 600 /dev/stdin /etc/wireguard/wg0.conf
           sudo modprobe wireguard
-          sudo wg-quick up ./wg0.conf
+          sudo wg-quick up wg0
 
       - name: 🧪 Dry-run database migrations
         if: github.actor != 'dependabot[bot]'
@@ -215,19 +217,18 @@ jobs:
         timeout-minutes: 10
         continue-on-error: true
         env:
-          MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD_MIGRATION }}
-        run: |
-          chmod +x Tools/db-migration.sh
-          Tools/db-migration.sh migrations \
-            "${{ secrets.MYSQL_SERVER }}" \
-            "${{ secrets.MYSQL_USER_MIGRATION }}" \
-            "${{ secrets.MYSQL_DATABASE }}" \
-            --dry-run
+          MYSQL_PWD: ${{ secrets.MARIADB_MIGRATION_PASSWORD }}
+          DB_HOST: ${{ secrets.MARIADB_HOST }}
+          DB_USER: ${{ secrets.MARIADB_MIGRATION_USER }}
+          DB_NAME: ${{ secrets.MARIADB_DATABASE }}
+        run: bash Tools/db-migration.sh migrations "$DB_HOST" "$DB_USER" "$DB_NAME" --dry-run
 
       - name: 🔓 Disconnect WireGuard VPN
         if: always() && env.WIREGUARD_CONNECTED == 'true' && github.actor != 'dependabot[bot]'
         shell: bash
-        run: sudo wg-quick down ./wg0.conf
+        run: |
+          sudo wg-quick down wg0
+          sudo rm -f /etc/wireguard/wg0.conf
 
       - name: 🔑 Release WireGuard connection lock
         if: always() && github.actor != 'dependabot[bot]'

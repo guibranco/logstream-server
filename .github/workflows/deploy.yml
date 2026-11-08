@@ -132,10 +132,10 @@ jobs:
           echo "WIREGUARD_CONNECTED=true" >> "$GITHUB_ENV"
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends wireguard wireguard-tools resolvconf
-          umask 077
-          printf '%s\n' "$WIREGUARD_CONFIG" > wg0.conf
+          # Ubuntu 26's AppArmor profile only lets wg-quick read /etc/wireguard
+          printf '%s\n' "$WIREGUARD_CONFIG" | sudo install -m 600 /dev/stdin /etc/wireguard/wg0.conf
           sudo modprobe wireguard
-          sudo wg-quick up ./wg0.conf
+          sudo wg-quick up wg0
 
       - name: 🔄 Apply database migrations
         timeout-minutes: 10
@@ -150,8 +150,8 @@ jobs:
         if: always() && env.WIREGUARD_CONNECTED == 'true'
         shell: bash
         run: |
-          sudo wg-quick down ./wg0.conf
-          rm -f wg0.conf
+          sudo wg-quick down wg0
+          sudo rm -f /etc/wireguard/wg0.conf
 
       - name: 🔓 Release WireGuard connection lock
         if: always()
