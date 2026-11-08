@@ -133,8 +133,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends wireguard wireguard-tools resolvconf
           # Ubuntu 26's AppArmor profile only lets wg-quick read /etc/wireguard
-          # Strip CRs in case the secret was saved with Windows line endings
-          printf '%s\n' "$WIREGUARD_CONFIG" | tr -d '\r' | sudo install -m 600 /dev/stdin /etc/wireguard/wg0.conf
+          # Strip a UTF-8 BOM and CRs in case the secret was saved from Windows
+          printf '%s\n' "$WIREGUARD_CONFIG" | sed '1s/^\xEF\xBB\xBF//' | tr -d '\r' \
+            | sudo install -m 600 /dev/stdin /etc/wireguard/wg0.conf
+          # Print the config structure (keys only, never values) to help debug parsing errors
+          echo "wg0.conf: $(sudo wc -l < /etc/wireguard/wg0.conf) lines"
+          sudo sed -E 's/^([A-Za-z]+)[[:space:]]*=.*/\1 = …/' /etc/wireguard/wg0.conf | grep -E '^[A-Za-z]+ = …$|^$' || true
           sudo modprobe wireguard
           sudo wg-quick up wg0
 
