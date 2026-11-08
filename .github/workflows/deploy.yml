@@ -101,67 +101,152 @@ jobs:
         id: gitversion
         uses: gittools/actions/gitversion/execute@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
 
-  # ── 4. Deploy via SSH (git pull) ──────────────────────────────────────────────
+  # ── 4. Database migrations (via WireGuard) ────────────────────────────────────
+  # Runs before the deploy so the new code always finds the schema it expects.
+  # db-migration.sh tracks applied files in schema_versions, so re-runs are no-ops.
+  database_migrations:
+    name: 🗄️ Database Migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: read
+    needs: [integration_tests]
+    environment: production
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 🔐 Acquire WireGuard connection lock
+        uses: guibranco/github-artifact-lock-action@6d965a4d06be6a2a8e0aa5583745696c5f23ab46 # v3.0.24
+        with:
+          lock-name: wireguard-connection
+
+      - name: 🔌 Establish WireGuard VPN connection
+        timeout-minutes: 5
+        shell: bash
+        env:
+          WIREGUARD_CONFIG: ${{ secrets.WIREGUARD_CONFIG }}
+        run: |
+          echo "WIREGUARD_CONNECTED=true" >> "$GITHUB_ENV"
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends wireguard wireguard-tools resolvconf
+          # Ubuntu 26's AppArmor profile only lets wg-quick read /etc/wireguard
+          # Strip a UTF-8 BOM and CRs in case the secret was saved from Windows
+          printf '%s\n' "$WIREGUARD_CONFIG" | sed '1s/^\xEF\xBB\xBF//' | tr -d '\r' \
+            | sudo install -m 600 /dev/stdin /etc/wireguard/wg0.conf
+          # Print the config structure (keys only, never values) to help debug parsing errors
+          echo "wg0.conf: $(sudo wc -l < /etc/wireguard/wg0.conf) lines"
+          sudo sed -E 's/^([A-Za-z]+)[[:space:]]*=.*/\1 = …/' /etc/wireguard/wg0.conf | grep -E '^[A-Za-z]+ = …$|^$' || true
+          sudo modprobe wireguard
+          sudo wg-quick up wg0
+
+      - name: 🔄 Apply database migrations
+        timeout-minutes: 10
+        env:
+          MYSQL_PWD: ${{ secrets.MARIADB_MIGRATION_PASSWORD }}
+          DB_HOST: ${{ secrets.MARIADB_HOST }}
+          DB_USER: ${{ secrets.MARIADB_MIGRATION_USER }}
+          DB_NAME: ${{ secrets.MARIADB_DATABASE }}
+        run: bash Tools/db-migration.sh migrations "$DB_HOST" "$DB_USER" "$DB_NAME"
+
+      - name: 🔌 Disconnect WireGuard VPN
+        if: always() && env.WIREGUARD_CONNECTED == 'true'
+        shell: bash
+        run: |
+          if ip link show wg0 >/dev/null 2>&1; then sudo wg-quick down wg0; fi
+          sudo rm -f /etc/wireguard/wg0.conf
+
+      - name: 🔓 Release WireGuard connection lock
+        if: always()
+        uses: guibranco/github-artifact-lock-action/release-lock@6d965a4d06be6a2a8e0aa5583745696c5f23ab46 # v3.0.24
+        with:
+          lock-name: wireguard-connection
+
+  # ── 5. Deploy via SSH ─────────────────────────────────────────────────────────
+  # Pulls the code, regenerates .env from secrets (runtime DB user) and
+  # restarts the systemd service.
   deploy:
     name: 🚀 Deploy to Server
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [version]
+    needs: [version, database_migrations]
     environment: production
 
     steps:
-      - name: 🔑 Write SSH private key
+      - name: 🔑 Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -p ${{ secrets.SSH_PORT || 22 }} ${{ secrets.SSH_HOST }} \
-            >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          cat > ~/.ssh/config <<EOF
+          Host server
+            HostName $SSH_HOST
+            User $SSH_USER
+            Port $SSH_PORT
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+          EOF
 
-      - name: 🚀 Pull latest code and restart
+      - name: 📥 Pull latest code and install dependencies
         run: |
-          ssh -i ~/.ssh/deploy_key \
-              -p ${{ secrets.SSH_PORT || 22 }} \
-              -o StrictHostKeyChecking=no \
-              ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
-              bash -s << 'ENDSSH'
-            set -e
-
-            echo "📥 Pulling latest code..."
+          ssh server bash -s << 'ENDSSH'
+            set -euo pipefail
             cd /opt/logstream-server
-            sudo -u logstream git clean -f composer.lock
-            sudo -u logstream git pull origin main
-
-            echo "📦 Installing dependencies..."
+            sudo -u logstream git fetch --quiet origin main
+            sudo -u logstream git reset --hard --quiet origin/main
             sudo -u logstream composer install \
               --no-dev \
               --optimize-autoloader \
               --no-interaction \
               --no-progress
+            sudo -u logstream mkdir -p storage/logs
+            test -d public || { echo "❌ public/ directory is missing"; exit 1; }
+          ENDSSH
 
-            echo "🏷️  Injecting version ${{ needs.version.outputs.fullSemVer }}..."
-            if sudo -u logstream grep -q '^APP_VERSION=' /opt/logstream-server/.env 2>/dev/null; then
-              sudo -u logstream sed -i "s|^APP_VERSION=.*|APP_VERSION=${{ needs.version.outputs.fullSemVer }}|" /opt/logstream-server/.env
-            else
-              echo "APP_VERSION=${{ needs.version.outputs.fullSemVer }}" | sudo -u logstream tee -a /opt/logstream-server/.env > /dev/null
-            fi
+      - name: 📝 Generate .env from secrets
+        env:
+          API_SECRET: ${{ secrets.API_SECRET }}
+          UI_SECRET: ${{ secrets.UI_SECRET }}
+          APP_VERSION: ${{ needs.version.outputs.fullSemVer }}
+          DB_HOST: ${{ secrets.MARIADB_HOST }}
+          DB_NAME: ${{ secrets.MARIADB_DATABASE }}
+          DB_USER: ${{ secrets.MARIADB_USER }}
+          DB_PASS: ${{ secrets.MARIADB_PASSWORD }}
+        run: |
+          umask 077
+          cat > .env.deploy <<EOF
+          HTTP_PORT=8081
+          WS_PORT=8080
+          API_SECRET=$API_SECRET
+          UI_SECRET=$UI_SECRET
+          APP_VERSION=$APP_VERSION
+          RETENTION_CONFIG=./retention.json
+          STORAGE_TYPE=mariadb
+          LOG_PATH=./storage/logs
+          DB_HOST=$DB_HOST
+          DB_PORT=3306
+          DB_NAME=$DB_NAME
+          DB_USER=$DB_USER
+          DB_PASS=$DB_PASS
+          EOF
+          ssh server 'sudo install -o logstream -g logstream -m 640 /dev/stdin /opt/logstream-server/.env' < .env.deploy
+          rm -f .env.deploy
 
-            echo "🔍 Verifying public/ directory..."
-            if [ -d "public" ]; then
-              echo "✅ public/ is present:"
-              ls -la public/
-            else
-              echo "❌ public/ directory is missing"
-              exit 1
-            fi
-
-            echo "♻️  Restarting service..."
+      - name: ♻️ Restart service and wait for health
+        run: |
+          ssh server bash -s << 'ENDSSH'
+            set -euo pipefail
             sudo systemctl restart logstream-server
-
-            echo "⏳ Waiting for service to be healthy..."
             for i in $(seq 1 20); do
-              HTTP=$(curl -o /dev/null -s -w "%{http_code}" \
-                http://localhost:8081/api/health || echo "000")
+              HTTP=$(curl -o /dev/null -s -w "%{http_code}" http://localhost:8081/api/health || echo "000")
               if [[ "$HTTP" == "200" ]]; then
                 echo "✅ Service is healthy (attempt $i)"
                 exit 0
@@ -169,98 +254,26 @@ jobs:
               echo "   Attempt $i — HTTP $HTTP, retrying in 3s..."
               sleep 3
             done
-
             echo "❌ Service did not become healthy in time"
+            sudo journalctl -u logstream-server -n 50 --no-pager
             exit 1
           ENDSSH
 
-      - name: 🔍 Verify Swagger UI is reachable
+      - name: 🔍 Verify public endpoint
+        env:
+          HEALTH_CHECK_URL: ${{ secrets.HEALTH_CHECK_URL }}
         run: |
-          HTTP=$(curl -o /dev/null -s -w "%{http_code}" \
-            "${{ secrets.HEALTH_CHECK_URL }}/docs")
+          HTTP=$(curl -o /dev/null -s -w "%{http_code}" "$HEALTH_CHECK_URL/api/health")
           if [[ "$HTTP" == "200" ]]; then
-            echo "✅ Swagger UI is reachable at /docs"
+            echo "✅ $HEALTH_CHECK_URL is reachable"
           else
-            echo "⚠️  Swagger UI returned HTTP $HTTP — check public/ on the server"
+            echo "❌ $HEALTH_CHECK_URL/api/health returned HTTP $HTTP"
             exit 1
           fi
 
       - name: 🧹 Remove private key
         if: always()
         run: rm -f ~/.ssh/deploy_key
-
-  # ── 5. Database migrations ────────────────────────────────────────────────────
-  # database_migrations:
-  #   name: 🗄️ Database Migrations
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 20
-  #   permissions:
-  #     actions: write
-  #     contents: write
-  #   needs: [deploy]
-
-  #   steps:
-  #     - name: 📥 Checkout code
-  #       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-  #       with:
-  #         fetch-depth: 0
-
-  #     - name: 🔍 Detect SQL changes
-  #       uses: dorny/paths-filter@v4
-  #       id: changes
-  #       with:
-  #         filters: |
-  #           sql:
-  #             - "migrations/**"
-
-  #     - name: ⏭️ Skip if no SQL changes
-  #       if: steps.changes.outputs.sql == 'false'
-  #       run: echo "No migration changes — skipping."
-
-  #     - name: 🔐 Acquire WireGuard Connection Lock
-  #       uses: guibranco/github-artifact-lock-action@v3.0.22
-  #       with:
-  #         lock-name: wireguard-connection
-
-  #     - name: 🔌 Establish WireGuard VPN Connection
-  #       shell: bash
-  #       timeout-minutes: 5
-  #       run: |
-  #         echo "WIREGUARD_CONNECTED=true" >> $GITHUB_ENV
-  #         sudo apt-get update
-  #         sudo apt-get install -y wireguard wireguard-tools resolvconf
-  #         echo "${{ secrets.WIREGUARD_CONFIG }}" > wg0.conf
-  #         sudo chmod 600 wg0.conf
-  #         sudo modprobe wireguard
-  #         sudo wg-quick up ./wg0.conf
-
-  #     - name: 🔍 Check for Schema Version Table
-  #       timeout-minutes: 5
-  #       id: new_installation
-  #       env:
-  #         MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD_MIGRATION }}
-  #       run: |
-  #         chmod +x Tools/db-check.sh
-  #         Tools/db-check.sh "${{ secrets.MYSQL_SERVER }}" "${{ secrets.MYSQL_USER_MIGRATION }}" "${{ secrets.MYSQL_DATABASE }}"
-
-  #     - name: 🔄 Execute Database Migration Scripts
-  #       timeout-minutes: 10
-  #       env:
-  #         MYSQL_PWD: ${{ secrets.MYSQL_PASSWORD_MIGRATION }}
-  #       run: |
-  #         chmod +x Tools/db-migration.sh
-  #         Tools/db-migration.sh Sql "${{ secrets.MYSQL_SERVER }}" "${{ secrets.MYSQL_USER_MIGRATION }}" "${{ secrets.MYSQL_DATABASE }}"
-
-  #     - name: 🔌 Disconnect WireGuard VPN
-  #       if: always()
-  #       shell: bash
-  #       run: sudo wg-quick down ./wg0.conf
-
-  #     - name: 🔓 Release WireGuard Connection Lock
-  #       if: always()
-  #       uses: guibranco/github-artifact-lock-action/release-lock@v3.0.22
-  #       with:
-  #         lock-name: wireguard-connection
 
   # ── 6. GitHub Release ─────────────────────────────────────────────────────────
   create_release:
@@ -269,7 +282,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
-    needs: [version, deploy] #, database_migrations]
+    needs: [version, deploy]
 
     steps:
       - name: 🏷️ Create release
