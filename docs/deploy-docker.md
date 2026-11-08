@@ -167,6 +167,9 @@ services:
       DB_USER:      ${DB_USER:-logservice}
       DB_PASS:      ${DB_PASS}
       LOG_PATH:     /app/storage/logs
+      # Nginx reaches the app over the Docker network; trust it so sender_ip
+      # records the real client instead of the Nginx container.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-172.16.0.0/12}
     volumes:
       - log_data:/app/storage/logs
     depends_on:
@@ -488,6 +491,7 @@ Add these to your `.env` file (or pass them directly to `docker compose`):
 | `HTTP_PORT` | ❌ | Internal HTTP port (default: `8081`) |
 | `WS_PORT` | ❌ | Internal WebSocket port (default: `8080`) |
 | `LOG_PATH` | ❌ | Log path when using file storage (default: `./storage/logs`) |
+| `TRUSTED_PROXIES` | ❌ | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` is trusted for `sender_ip` (e.g. `172.16.0.0/12` for the Nginx container) |
 
 ---
 

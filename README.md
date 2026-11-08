@@ -105,6 +105,7 @@ User-Agent: BillingService/2.1.0 (PHP 8.3)
 | `category`   | string | Partial match                              |
 | `trace_id`   | string | Exact match                                |
 | `batch_id`   | string | Exact match                                |
+| `sender_ip`  | string | Exact match                                |
 | `date_from`  | string | ISO 8601 timestamp (inclusive)             |
 | `date_to`    | string | ISO 8601 timestamp (inclusive)             |
 | `search`     | string | Substring match on `message`               |
@@ -162,7 +163,8 @@ Connect from the UI to receive a live stream of every ingested log.
     "message":    "Charge failed",
     "context":    { ... },
     "timestamp":  "2025-01-15T14:22:00.000Z",
-    "created_at": "2025-01-15T14:22:00.012Z"
+    "created_at": "2025-01-15T14:22:00.012Z",
+    "sender_ip":  "203.0.113.7"
   }
 }
 ```
@@ -191,3 +193,23 @@ Connect from the UI to receive a live stream of every ingested log.
 | `context`    | object?         | Arbitrary structured data              |
 | `timestamp`  | ISO 8601        | When the event occurred                |
 | `created_at` | ISO 8601        | When the server persisted it           |
+| `sender_ip`  | string?         | Client IP, captured by the server (see below) |
+
+### Sender IP
+
+Every ingested entry records the IP address of the client that sent it as
+`sender_ip`. It comes from the connection and cannot be set in the request body.
+
+Behind a reverse proxy the connection comes from the proxy, so set
+`TRUSTED_PROXIES` to the proxy addresses (comma-separated IPs or CIDR ranges).
+For requests from a trusted proxy, the server reads the original client from
+`X-Forwarded-For`, skipping trusted hops from the right, and falls back to
+`X-Real-IP`. Forwarding headers from any other peer are ignored.
+
+```dotenv
+TRUSTED_PROXIES=127.0.0.1,::1            # Nginx on the same host
+TRUSTED_PROXIES=172.16.0.0/12            # Nginx container on a Docker network
+```
+
+In MariaDB mode, apply `migrations/005_sender_ip.sql` to add the column.
+Entries stored before that keep `sender_ip: null`.

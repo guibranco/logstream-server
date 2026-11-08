@@ -38,6 +38,8 @@ final class LogEntry
         public readonly \DateTimeImmutable $timestamp,
         /** When the server persisted the entry */
         public readonly \DateTimeImmutable $createdAt,
+        /** IP address of the client that sent the entry (captured server-side) */
+        public readonly ?string $senderIp = null,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -57,6 +59,7 @@ final class LogEntry
             context:   self::decodeContext($d['context'] ?? null),
             timestamp: self::parseDate($d['timestamp'] ?? 'now'),
             createdAt: self::parseDate($d['created_at'] ?? 'now'),
+            senderIp:  self::parseIp($d['sender_ip'] ?? null),
         );
     }
 
@@ -75,6 +78,7 @@ final class LogEntry
             'context'    => $this->context,
             'timestamp'  => $this->timestamp->format(\DateTimeInterface::RFC3339_EXTENDED),
             'created_at' => $this->createdAt->format(\DateTimeInterface::RFC3339_EXTENDED),
+            'sender_ip'  => $this->senderIp,
         ];
     }
 
@@ -93,6 +97,14 @@ final class LogEntry
             return is_array($decoded) ? $decoded : null;
         }
         return null;
+    }
+
+    private static function parseIp(mixed $value): ?string
+    {
+        if (!is_string($value) || $value === '') {
+            return null;
+        }
+        return filter_var($value, FILTER_VALIDATE_IP) !== false ? $value : null;
     }
 
     private static function parseDate(string $value): \DateTimeImmutable

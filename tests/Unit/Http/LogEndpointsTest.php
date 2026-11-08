@@ -8,6 +8,7 @@ use GuzzleHttp\Psr7\Utils;
 use LogService\Auth\AuthResult;
 use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Auth\WriteAuthInterface;
+use LogService\Http\ClientIpResolver;
 use LogService\Http\Router;
 use LogService\Models\LogEntry;
 use LogService\Storage\StorageInterface;
@@ -176,6 +177,57 @@ final class LogEndpointsTest extends TestCase
     }
 
     #[Test]
+    public function ingest_records_the_sender_ip_from_the_connection_and_ignores_the_body(): void
+    {
+        $captured = [];
+        $storage  = $this->createMock(StorageInterface::class);
+        $storage->expects(self::exactly(2))->method('save')
+            ->willReturnCallback(function (LogEntry $e) use (&$captured): void { $captured[] = $e; });
+
+        $request = (new ServerRequest('POST', 'http://localhost/api/logs', [], '', '1.1', ['REMOTE_ADDR' => '203.0.113.7']))
+            ->withBody(Utils::streamFor(json_encode([
+                'app_key'   => 'my-app',
+                'app_id'    => 'prod',
+                'sender_ip' => '1.1.1.1',
+                'logs'      => [
+                    ['message' => 'first', 'sender_ip' => '8.8.8.8'],
+                    ['message' => 'second'],
+                ],
+            ])));
+
+        $response = $this->makeRouter($storage)->handle($request);
+        $body     = json_decode((string) $response->getBody(), true);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame(['203.0.113.7', '203.0.113.7'], array_map(fn(LogEntry $e) => $e->senderIp, $captured));
+        self::assertSame('203.0.113.7', $body['entries'][0]['sender_ip']);
+    }
+
+    #[Test]
+    public function ingest_resolves_the_sender_ip_through_a_trusted_proxy(): void
+    {
+        $captured = null;
+        $storage  = $this->createMock(StorageInterface::class);
+        $storage->method('save')->willReturnCallback(function (LogEntry $e) use (&$captured): void { $captured = $e; });
+
+        $router = new Router(
+            storage:     $storage,
+            hub:         new LogHub(''),
+            writeAuth:   new SingleKeyWriteAuth(''),
+            uiSecret:    'test-ui-secret',
+            storageType: 'file',
+            ipResolver:  new ClientIpResolver(['172.16.0.0/12']),
+        );
+
+        $request = (new ServerRequest('POST', 'http://localhost/api/logs', ['X-Forwarded-For' => '198.51.100.1'], '', '1.1', ['REMOTE_ADDR' => '172.18.0.2']))
+            ->withBody(Utils::streamFor(json_encode(['app_key' => 'my-app', 'app_id' => 'prod', 'message' => 'hi'])));
+
+        $router->handle($request);
+
+        self::assertSame('198.51.100.1', $captured?->senderIp);
+    }
+
+    #[Test]
     public function ingest_saves_a_batch_of_entries(): void
     {
         $storage = $this->createMock(StorageInterface::class);
@@ -298,6 +350,20 @@ final class LogEndpointsTest extends TestCase
         $response = $this->makeRouter($storage)->handle(
             $this->authed('GET', '/api/logs?app_key=my-app&level=error&limit=50&offset=10'),
         );
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function search_forwards_the_sender_ip_filter(): void
+    {
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::once())
+            ->method('search')
+            ->with(self::callback(fn(array $f) => ($f['sender_ip'] ?? null) === '203.0.113.7'), 100, 0)
+            ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
+
+        $response = $this->makeRouter($storage)->handle($this->authed('GET', '/api/logs?sender_ip=203.0.113.7'));
 
         self::assertSame(200, $response->getStatusCode());
     }
