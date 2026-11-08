@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LogService\Tests\Unit\Retention;
 
+use LogService\Database\Connection;
 use LogService\Retention\DatabaseRetentionPolicyRepository;
 use LogService\Retention\RetentionPolicy;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
@@ -38,7 +39,7 @@ final class DatabaseRetentionPolicyRepositoryTest extends TestCase
             )',
         );
 
-        $this->repo = new DatabaseRetentionPolicyRepository($this->pdo);
+        $this->repo = new DatabaseRetentionPolicyRepository(Connection::wrap($this->pdo));
     }
 
     // ── create / all / find ───────────────────────────────────────────────────

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace LogService\Retention;
 
+use LogService\Database\Connection;
+
 /**
  * Pruner for the MariaDB / MySQL storage backend.
  *
@@ -15,7 +17,7 @@ namespace LogService\Retention;
  */
 final class DatabasePruner implements PrunerInterface
 {
-    public function __construct(private readonly \PDO $pdo) {}
+    public function __construct(private readonly Connection $db) {}
 
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -28,7 +30,7 @@ final class DatabasePruner implements PrunerInterface
         [$conditions, $params] = DatabaseConditionBuilder::build($policy);
 
         $sql  = 'DELETE FROM log_entries WHERE ' . implode(' AND ', $conditions);
-        $stmt = $this->pdo->prepare($sql);
+        $stmt = $this->db->pdo()->prepare($sql);
         $stmt->execute($params);
 
         return $stmt->rowCount();

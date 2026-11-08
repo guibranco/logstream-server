@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LogService\Tests\Unit\Retention;
 
+use LogService\Database\Connection;
 use LogService\Retention\DatabasePruner;
 use LogService\Retention\RetentionPolicy;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
@@ -36,7 +37,7 @@ final class DatabasePrunerTest extends TestCase
             )',
         );
 
-        $this->pruner = new DatabasePruner($this->pdo);
+        $this->pruner = new DatabasePruner(Connection::wrap($this->pdo));
     }
 
     // ──────────────────────────────────────────────────────────────────────────

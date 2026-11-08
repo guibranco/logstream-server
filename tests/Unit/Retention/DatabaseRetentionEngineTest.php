@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LogService\Tests\Unit\Retention;
 
+use LogService\Database\Connection;
 use LogService\Retention\DatabaseRetentionEngine;
 use LogService\Retention\RetentionPolicy;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
@@ -36,7 +37,7 @@ final class DatabaseRetentionEngineTest extends TestCase
             )',
         );
 
-        $this->engine = new DatabaseRetentionEngine($this->pdo);
+        $this->engine = new DatabaseRetentionEngine(Connection::wrap($this->pdo));
     }
 
     // ──────────────────────────────────────────────────────────────────────────

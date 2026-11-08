@@ -8,6 +8,7 @@ require __DIR__ . '/../vendor/autoload.php';
 use Dotenv\Dotenv;
 use LogService\Auth\DatabaseWriteAuth;
 use LogService\Auth\SingleKeyWriteAuth;
+use LogService\Database\Connection;
 use LogService\Http\ClientIpResolver;
 use LogService\Http\Router;
 use LogService\Repository\ClientRepository;
@@ -54,16 +55,20 @@ if ($storageType === 'mariadb') {
         $_ENV['DB_PORT'] ?? '3306',
         $_ENV['DB_NAME'] ?? 'logservice',
     );
-    $pdo = new PDO($dsn, $_ENV['DB_USER'] ?? 'root', $_ENV['DB_PASS'] ?? '', [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES   => false,
-    ]);
+    $dbUser = $_ENV['DB_USER'] ?? 'root';
+    $dbPass = $_ENV['DB_PASS'] ?? '';
 
-    $storage          = new MariaDBStorage($dsn, $_ENV['DB_USER'] ?? 'root', $_ENV['DB_PASS'] ?? '');
-    $writeAuthDb      = new DatabaseWriteAuth($pdo);
+    // Both connections re-open themselves if MariaDB drops them while idle
+    // (wait_timeout, VPN/NAT idle timeouts), instead of failing with
+    // "MySQL server has gone away" until the server restarts.
+    $appDb      = Connection::mysql($dsn, $dbUser, $dbPass);
+    $storageDb  = Connection::mysql($dsn, $dbUser, $dbPass, ["SET time_zone = '+00:00'"]);
+    $storageDb->pdo(); // fail fast on bad credentials at boot
+
+    $storage          = new MariaDBStorage($storageDb);
+    $writeAuthDb      = new DatabaseWriteAuth($appDb);
     $writeAuth        = $writeAuthDb;
-    $clientRepository = new ClientRepository($pdo);
+    $clientRepository = new ClientRepository($appDb);
 
     $authMode = 'per-client (X-Api-Key / X-Api-Token  →  clients table)';
     echo "[Storage]  MariaDB ({$_ENV['DB_HOST']}:{$_ENV['DB_PORT']}/{$_ENV['DB_NAME']})\n";
@@ -101,8 +106,8 @@ if ($retentionConfigPath !== null) {
 
 if ($retentionConfig->isEnabled()) {
     if ($storageType === 'mariadb') {
-        $retentionEngine  = new DatabaseRetentionEngine($pdo);
-        $policyRepository = new DatabaseRetentionPolicyRepository($pdo);
+        $retentionEngine  = new DatabaseRetentionEngine($appDb);
+        $policyRepository = new DatabaseRetentionPolicyRepository($appDb);
     } else {
         $retentionEngine  = new FileRetentionEngine($logPath ?? (__DIR__ . '/../storage/logs'));
         $policyRepository = new FileRetentionPolicyRepository(

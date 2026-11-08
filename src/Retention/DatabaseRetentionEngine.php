@@ -4,9 +4,11 @@ declare(strict_types=1);
 
 namespace LogService\Retention;
 
+use LogService\Database\Connection;
+
 final class DatabaseRetentionEngine implements RetentionEngineInterface
 {
-    public function __construct(private readonly \PDO $pdo) {}
+    public function __construct(private readonly Connection $db) {}
 
     public function purge(RetentionPolicy $policy, bool $dryRun = false): RetentionResult
     {
@@ -28,12 +30,12 @@ final class DatabaseRetentionEngine implements RetentionEngineInterface
 
         if ($dryRun) {
             $sql   = 'SELECT COUNT(*) FROM log_entries WHERE ' . $whereClause;
-            $stmt  = $this->pdo->prepare($sql);
+            $stmt  = $this->db->pdo()->prepare($sql);
             $stmt->execute($params);
             $count = (int) $stmt->fetchColumn();
         } else {
             $sql   = 'DELETE FROM log_entries WHERE ' . $whereClause;
-            $stmt  = $this->pdo->prepare($sql);
+            $stmt  = $this->db->pdo()->prepare($sql);
             $stmt->execute($params);
             $count = $stmt->rowCount();
         }

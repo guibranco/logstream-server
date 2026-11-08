@@ -4,21 +4,16 @@ declare(strict_types=1);
 
 namespace LogService\Storage;
 
+use LogService\Database\Connection;
 use LogService\Models\LogEntry;
 
 final class MariaDBStorage implements StorageInterface
 {
-    private \PDO $pdo;
-
-    public function __construct(string $dsn, string $user, string $password)
-    {
-        $this->pdo = new \PDO($dsn, $user, $password, [
-            \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
-            \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-            \PDO::ATTR_EMULATE_PREPARES   => false,
-        ]);
-        $this->pdo->exec("SET time_zone = '+00:00'");
-    }
+    /**
+     * @param Connection $db Must run "SET time_zone = '+00:00'" on connect —
+     *                       timestamps are stored and compared in UTC.
+     */
+    public function __construct(private readonly Connection $db) {}
 
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -33,7 +28,7 @@ final class MariaDBStorage implements StorageInterface
                  :user_agent, :sender_ip, :level, :category, :message, :context, :timestamp)
         SQL;
 
-        $stmt = $this->pdo->prepare($sql);
+        $stmt = $this->db->pdo()->prepare($sql);
         $stmt->execute([
             ':id'         => $entry->id,
             ':trace_id'   => $entry->traceId,
@@ -60,7 +55,7 @@ final class MariaDBStorage implements StorageInterface
         // Data query
         $sql = "SELECT * FROM log_entries {$whereClause} ORDER BY timestamp DESC LIMIT :limit OFFSET :offset";
 
-        $stmt = $this->pdo->prepare($sql);
+        $stmt = $this->db->pdo()->prepare($sql);
         foreach ($params as $key => $val) {
             $stmt->bindValue($key, $val);
         }
@@ -71,7 +66,7 @@ final class MariaDBStorage implements StorageInterface
 
         // Count query
         $countSql  = "SELECT COUNT(*) FROM log_entries {$whereClause}";
-        $countStmt = $this->pdo->prepare($countSql);
+        $countStmt = $this->db->pdo()->prepare($countSql);
         foreach ($params as $key => $val) {
             $countStmt->bindValue($key, $val);
         }
@@ -90,7 +85,7 @@ final class MariaDBStorage implements StorageInterface
 
     public function findById(string $id): ?LogEntry
     {
-        $stmt = $this->pdo->prepare(
+        $stmt = $this->db->pdo()->prepare(
             "SELECT * FROM log_entries WHERE id = :id OR trace_id = :trace_id LIMIT 1"
         );
         $stmt->execute([':id' => $id, ':trace_id' => $id]);

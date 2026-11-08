@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LogService\Auth;
 
+use LogService\Database\Connection;
 use Psr\Http\Message\ServerRequestInterface;
 
 /**
@@ -24,7 +25,7 @@ final class DatabaseWriteAuth implements WriteAuthInterface, CacheFlushableInter
     /** In-memory cache: app_key → api_token (populated lazily, cleared on miss). */
     private array $cache = [];
 
-    public function __construct(private readonly \PDO $pdo) {}
+    public function __construct(private readonly Connection $db) {}
 
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -67,7 +68,7 @@ final class DatabaseWriteAuth implements WriteAuthInterface, CacheFlushableInter
         }
 
         try {
-            $stmt = $this->pdo->prepare(
+            $stmt = $this->db->pdo()->prepare(
                 'SELECT api_token FROM clients WHERE app_key = :app_key AND active = 1 LIMIT 1'
             );
             $stmt->execute([':app_key' => $appKey]);

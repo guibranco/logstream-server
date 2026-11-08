@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LogService\Tests\Unit\Repository;
 
+use LogService\Database\Connection;
 use LogService\Repository\Client;
 use LogService\Repository\ClientRepository;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
@@ -43,7 +44,7 @@ final class ClientRepositoryTest extends TestCase
             )
         ");
 
-        $this->repo = new ClientRepository($this->pdo);
+        $this->repo = new ClientRepository(Connection::wrap($this->pdo));
     }
 
     // ── create ────────────────────────────────────────────────────────────────
