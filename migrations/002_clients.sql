@@ -9,8 +9,6 @@
 --   Server checks: SELECT api_token FROM clients WHERE app_key = ? AND active = 1
 --   Server verifies: hash_equals(stored_token, supplied_token)
 
-USE logservice;
-
 CREATE TABLE IF NOT EXISTS clients (
     -- Internal auto-increment identifier
     id          INT UNSIGNED  NOT NULL AUTO_INCREMENT,

@@ -1,12 +1,6 @@
 -- LogService – initial schema
 -- Run: mysql -u <user> -p <dbname> < migrations/001_logs.sql
 
-CREATE DATABASE IF NOT EXISTS logservice
-    CHARACTER SET utf8mb4
-    COLLATE utf8mb4_unicode_ci;
-
-USE logservice;
-
 CREATE TABLE IF NOT EXISTS log_entries (
     -- Internal time-sortable primary key (ULID, 26 chars)
     id          VARCHAR(26)   NOT NULL,
