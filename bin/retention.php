@@ -5,6 +5,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../vendor/autoload.php';
 
+use LogService\Database\Connection;
 use Dotenv\Dotenv;
 use LogService\Retention\DatabaseRetentionEngine;
 use LogService\Retention\FileRetentionEngine;
@@ -98,7 +99,7 @@ if ($storageType === 'mariadb') {
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES   => false,
     ]);
-    $engine = new DatabaseRetentionEngine($pdo);
+    $engine = new DatabaseRetentionEngine(Connection::wrap($pdo));
 } else {
     $logPath = $_ENV['LOG_PATH'] ?? __DIR__ . '/../storage/logs';
     $engine  = new FileRetentionEngine($logPath);

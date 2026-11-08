@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace LogService\Repository;
 
+use LogService\Database\Connection;
+
 /**
  * CRUD repository for the `clients` table.
  *
@@ -15,12 +17,12 @@ namespace LogService\Repository;
  */
 class ClientRepository
 {
-    public function __construct(private readonly \PDO $pdo) {}
+    public function __construct(private readonly Connection $db) {}
 
     /** @return Client[] All registered clients, ordered by name. */
     public function all(): array
     {
-        $stmt = $this->pdo->query(
+        $stmt = $this->db->pdo()->query(
             'SELECT id, name, app_key, active, created_at, updated_at
              FROM clients
              ORDER BY name ASC'
@@ -34,7 +36,7 @@ class ClientRepository
     /** Find by app_key; returns null when not found. */
     public function findByKey(string $appKey): ?Client
     {
-        $stmt = $this->pdo->prepare(
+        $stmt = $this->db->pdo()->prepare(
             'SELECT id, name, app_key, active, created_at, updated_at
              FROM clients
              WHERE app_key = :app_key
@@ -63,7 +65,7 @@ class ClientRepository
 
         $token = $this->generateToken();
 
-        $this->pdo->prepare(
+        $this->db->pdo()->prepare(
             'INSERT INTO clients (name, app_key, api_token)
              VALUES (:name, :app_key, :api_token)'
         )->execute([
@@ -73,7 +75,7 @@ class ClientRepository
         ]);
 
         return new Client(
-            id:        (int) $this->pdo->lastInsertId(),
+            id:        (int) $this->db->pdo()->lastInsertId(),
             name:      $name,
             appKey:    $appKey,
             active:    true,
@@ -94,7 +96,7 @@ class ClientRepository
             throw new \RuntimeException("Client '{$appKey}' not found.");
         }
 
-        $this->pdo->prepare(
+        $this->db->pdo()->prepare(
             'UPDATE clients
              SET name = :name, active = :active
              WHERE app_key = :app_key'
@@ -125,7 +127,7 @@ class ClientRepository
 
         $token = $this->generateToken();
 
-        $this->pdo->prepare(
+        $this->db->pdo()->prepare(
             'UPDATE clients SET api_token = :api_token WHERE app_key = :app_key'
         )->execute([
             ':api_token' => $token,
@@ -158,22 +160,22 @@ class ClientRepository
             throw new \RuntimeException("Client '{$appKey}' not found.");
         }
 
-        $this->pdo->beginTransaction();
+        $this->db->pdo()->beginTransaction();
 
         try {
-            $stmt = $this->pdo->prepare(
+            $stmt = $this->db->pdo()->prepare(
                 'DELETE FROM log_entries WHERE app_key = :app_key'
             );
             $stmt->execute([':app_key' => $appKey]);
             $logsDeleted = $stmt->rowCount();
 
-            $this->pdo->prepare(
+            $this->db->pdo()->prepare(
                 'DELETE FROM clients WHERE app_key = :app_key'
             )->execute([':app_key' => $appKey]);
 
-            $this->pdo->commit();
+            $this->db->pdo()->commit();
         } catch (\Throwable $e) {
-            $this->pdo->rollBack();
+            $this->db->pdo()->rollBack();
             throw new \RuntimeException(
                 "Failed to delete client '{$appKey}': " . $e->getMessage(),
                 previous: $e,

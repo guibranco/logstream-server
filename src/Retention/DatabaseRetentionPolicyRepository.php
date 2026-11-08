@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace LogService\Retention;
 
+use LogService\Database\Connection;
+
 final class DatabaseRetentionPolicyRepository implements RetentionPolicyRepositoryInterface
 {
-    public function __construct(private readonly \PDO $pdo) {}
+    public function __construct(private readonly Connection $db) {}
 
     public function all(): array
     {
-        $stmt = $this->pdo->query('SELECT * FROM retention_policies ORDER BY name');
+        $stmt = $this->db->pdo()->query('SELECT * FROM retention_policies ORDER BY name');
         return array_map(
             fn(array $row) => $this->rowToPolicy($row),
             $stmt->fetchAll(),
@@ -19,7 +21,7 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
 
     public function find(string $name): ?RetentionPolicy
     {
-        $stmt = $this->pdo->prepare('SELECT * FROM retention_policies WHERE name = :name');
+        $stmt = $this->db->pdo()->prepare('SELECT * FROM retention_policies WHERE name = :name');
         $stmt->execute([':name' => $name]);
         $row = $stmt->fetch();
         return $row !== false ? $this->rowToPolicy($row) : null;
@@ -27,7 +29,7 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
 
     public function create(RetentionPolicy $policy): void
     {
-        $stmt = $this->pdo->prepare(
+        $stmt = $this->db->pdo()->prepare(
             'INSERT INTO retention_policies
                 (name, app_key, app_id, level, category, message_regex, message_glob, older_than_days)
              VALUES
@@ -38,7 +40,7 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
 
     public function update(RetentionPolicy $policy): void
     {
-        $stmt = $this->pdo->prepare(
+        $stmt = $this->db->pdo()->prepare(
             'UPDATE retention_policies
              SET app_key         = :app_key,
                  app_id          = :app_id,
@@ -55,7 +57,7 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
 
     public function delete(string $name): void
     {
-        $stmt = $this->pdo->prepare('DELETE FROM retention_policies WHERE name = :name');
+        $stmt = $this->db->pdo()->prepare('DELETE FROM retention_policies WHERE name = :name');
         $stmt->execute([':name' => $name]);
     }
 

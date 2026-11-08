@@ -5,6 +5,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/../vendor/autoload.php';
 
+use LogService\Database\Connection;
 use Dotenv\Dotenv;
 use LogService\Retention\DatabasePruner;
 use LogService\Retention\FileStoragePruner;
@@ -59,7 +60,7 @@ if ($storageType === 'mariadb') {
         PDO::ATTR_EMULATE_PREPARES   => false,
     ]);
     $pdo->exec("SET time_zone = '+00:00'");
-    $pruner = new DatabasePruner($pdo);
+    $pruner = new DatabasePruner(Connection::wrap($pdo));
 } else {
     $logPath = $_ENV['LOG_PATH'] ?? dirname(__DIR__) . '/storage/logs';
     $pruner  = new FileStoragePruner($logPath);

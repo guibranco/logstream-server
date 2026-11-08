@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LogService\Tests\Unit\Auth;
 
+use LogService\Database\Connection;
 use LogService\Auth\DatabaseWriteAuth;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -45,7 +46,7 @@ final class DatabaseWriteAuthTest extends TestCase
                 ('Inactive App', 'inactive-app', 'token-inactive', 0)
         ");
 
-        $this->auth = new DatabaseWriteAuth($this->pdo);
+        $this->auth = new DatabaseWriteAuth(Connection::wrap($this->pdo));
     }
 
     // ──────────────────────────────────────────────────────────────────────────
