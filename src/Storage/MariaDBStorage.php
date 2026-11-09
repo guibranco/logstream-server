@@ -131,6 +131,26 @@ final class MariaDBStorage implements StorageInterface
             $params[':search'] = '%' . $filters['search'] . '%';
         }
 
+        // Context properties: compare the unquoted JSON value as a string.
+        // The JSON path is bound as a parameter; ContextFilter quotes every segment.
+        foreach ($filters['context'] ?? [] as $i => $contextFilter) {
+            $path      = ":ctx_path_{$i}";
+            $value     = ":ctx_value_{$i}";
+            $extracted = "JSON_UNQUOTE(JSON_EXTRACT(context, {$path}))";
+
+            $where[] = $contextFilter->negate
+                ? "(JSON_EXTRACT(context, {$path}) IS NULL OR {$extracted} <> {$value})"
+                : "{$extracted} = {$value}";
+            $params[$path]  = $contextFilter->jsonPath();
+            $params[$value] = $contextFilter->value;
+        }
+
+        // Free text across the whole context document (ft_context, migration 006).
+        if (!empty($filters['context_search'])) {
+            $where[]                   = 'MATCH(context) AGAINST(:context_search IN BOOLEAN MODE)';
+            $params[':context_search'] = ContextFilter::fulltextPhrase($filters['context_search']);
+        }
+
         // Date range
         if (!empty($filters['date_from'])) {
             $where[]             = 'timestamp >= :date_from';

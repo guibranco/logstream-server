@@ -11,6 +11,7 @@ use LogService\Auth\WriteAuthInterface;
 use LogService\Http\ClientIpResolver;
 use LogService\Http\Router;
 use LogService\Models\LogEntry;
+use LogService\Storage\ContextFilter;
 use LogService\Storage\StorageInterface;
 use LogService\WebSocket\LogHub;
 use PHPUnit\Framework\Attributes\Test;
@@ -366,6 +367,68 @@ final class LogEndpointsTest extends TestCase
         $response = $this->makeRouter($storage)->handle($this->authed('GET', '/api/logs?sender_ip=203.0.113.7'));
 
         self::assertSame(200, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function search_forwards_context_filters(): void
+    {
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::once())
+            ->method('search')
+            ->with(self::callback(function (array $f) {
+                $ctx = $f['context'] ?? [];
+                return count($ctx) === 2
+                    && $ctx[0] instanceof ContextFilter
+                    && $ctx[0]->path === ['order', 'id'] && $ctx[0]->value === '42' && !$ctx[0]->negate
+                    && $ctx[1]->path === ['role'] && $ctx[1]->value === 'bot' && $ctx[1]->negate;
+            }), 100, 0)
+            ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
+
+        $response = $this->makeRouter($storage)->handle(
+            $this->authed('GET', '/api/logs?context%5Border.id%5D=42&context_not%5Brole%5D=bot'),
+        );
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function search_forwards_the_trimmed_context_search_term(): void
+    {
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::once())
+            ->method('search')
+            ->with(self::callback(fn(array $f) => ($f['context_search'] ?? null) === 'card_declined'), 100, 0)
+            ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
+
+        $response = $this->makeRouter($storage)->handle(
+            $this->authed('GET', '/api/logs?context_search=%20card_declined%20'),
+        );
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function search_rejects_a_context_search_term_shorter_than_3_characters(): void
+    {
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::never())->method('search');
+
+        $response = $this->makeRouter($storage)->handle($this->authed('GET', '/api/logs?context_search=42'));
+
+        self::assertSame(400, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function search_rejects_malformed_context_filters(): void
+    {
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::never())->method('search');
+
+        $response = $this->makeRouter($storage)->handle(
+            $this->authed('GET', '/api/logs?context=oops'),
+        );
+
+        self::assertSame(400, $response->getStatusCode());
     }
 
     #[Test]

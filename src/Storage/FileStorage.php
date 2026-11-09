@@ -199,6 +199,18 @@ final class FileStorage implements StorageInterface
             }
         }
 
+        $context = is_array($entry['context'] ?? null) ? $entry['context'] : null;
+
+        foreach ($filters['context'] ?? [] as $contextFilter) {
+            if (!$contextFilter->matches($context)) {
+                return false;
+            }
+        }
+
+        if (!empty($filters['context_search']) && !ContextFilter::containsTerm($context, $filters['context_search'])) {
+            return false;
+        }
+
         if (!empty($filters['date_from']) && !$this->withinBound($entry, $filters['date_from'], before: false)) {
             return false;
         }

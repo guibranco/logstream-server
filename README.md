@@ -109,8 +109,16 @@ User-Agent: BillingService/2.1.0 (PHP 8.3)
 | `date_from`  | string | ISO 8601 timestamp (inclusive)             |
 | `date_to`    | string | ISO 8601 timestamp (inclusive)             |
 | `search`     | string | Substring match on `message`               |
+| `context[<path>]`     | string | `context` property equals value (see below) |
+| `context_not[<path>]` | string | `context` property differs from value or is absent |
 | `limit`      | int    | Max entries returned (default 100, max 1000) |
 | `offset`     | int    | Pagination offset (default 0)              |
+
+**Context filters.** `<path>` is a property name in `context`; use dots for
+nested objects (`context[order.id]=42` matches `{"order": {"id": 42}}`).
+Values are compared as strings: numbers in plain form, booleans as
+`true`/`false`, JSON null as `null`. Repeat the parameter to combine
+conditions (AND); at most 10 per request. A malformed key returns `400`.
 
 **Response (200):**
 ```json

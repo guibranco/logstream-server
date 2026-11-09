@@ -153,6 +153,8 @@ Send multiple entries in one request by placing them in a `logs` array. Fields s
 | `date_from` | ISO 8601 — inclusive lower bound |
 | `date_to` | ISO 8601 — inclusive upper bound |
 | `search` | Substring match on `message` |
+| `context[<path>]` | `context` property equals value; dots reach nested objects (`context[order.id]=42`) |
+| `context_not[<path>]` | `context` property differs from value or is absent |
 | `limit` | Max entries returned (default `100`, max `1000`) |
 | `offset` | Pagination offset (default `0`) |
 
