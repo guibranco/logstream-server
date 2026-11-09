@@ -1,4 +1,4 @@
-FROM php:8.5.11-cli
+FROM php:8.5.12-cli
 
 # ── System dependencies ────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
