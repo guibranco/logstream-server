@@ -81,6 +81,57 @@ jobs:
 
             ✅ All unit tests passed.
 
+  # ── Storage integration: PHPUnit against file storage and a real MariaDB ────
+  storage_integration_tests:
+    name: 🗃️ Storage Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: test
+          MARIADB_DATABASE: logstream_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 🐘 Setup PHP 8.4
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # v2
+        with:
+          php-version: "8.4"
+          extensions: sockets, pcntl, pdo_mysql
+          coverage: none
+
+      - name: 💾 Cache Composer dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: /tmp/composer-cache
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: 📦 Install PHP dependencies (with dev)
+        run: composer install --no-interaction --no-progress
+
+      - name: 🗃️ Run storage integration tests
+        env:
+          TEST_DB_DSN: "mysql:host=127.0.0.1;port=3306;dbname=logstream_test;charset=utf8mb4"
+          TEST_DB_USER: root
+          TEST_DB_PASS: test
+        run: vendor/bin/phpunit --testdox --testsuite integration --fail-on-skipped
+
   # ── Integration: spin up Docker, run endpoint tests ──────────────────────────
   integration_tests:
     name: 🔌 Integration Tests
