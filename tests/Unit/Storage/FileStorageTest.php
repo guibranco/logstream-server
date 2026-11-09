@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace LogService\Tests\Unit\Storage;
 
 use LogService\Models\LogEntry;
+use LogService\Storage\ContextFilter;
 use LogService\Storage\FileStorage;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
@@ -221,6 +222,40 @@ final class FileStorageTest extends TestCase
     }
 
     // ──────────────────────────────────────────────────────────────────────────
+    // search() — context properties
+    // ──────────────────────────────────────────────────────────────────────────
+
+    #[Test]
+    public function it_filters_by_nested_context_property(): void
+    {
+        $this->storage->save($this->makeEntry('01A', context: ['order' => ['id' => 42]]));
+        $this->storage->save($this->makeEntry('01B', context: ['order' => ['id' => 7]]));
+        $this->storage->save($this->makeEntry('01C'));
+
+        $result = $this->storage->search([
+            'context' => ContextFilter::fromQuery(['order.id' => '42'], null),
+        ]);
+
+        self::assertSame(1, $result['total']);
+        self::assertSame('01A', $result['entries'][0]['id']);
+    }
+
+    #[Test]
+    public function it_excludes_by_context_property_keeping_entries_without_it(): void
+    {
+        $this->storage->save($this->makeEntry('01A', context: ['role' => 'bot']));
+        $this->storage->save($this->makeEntry('01B', context: ['role' => 'human']));
+        $this->storage->save($this->makeEntry('01C'));
+
+        $result = $this->storage->search([
+            'context' => ContextFilter::fromQuery(null, ['role' => 'bot']),
+        ]);
+
+        self::assertSame(2, $result['total']);
+        self::assertEqualsCanonicalizing(['01B', '01C'], array_column($result['entries'], 'id'));
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
     // search() — date range
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -333,6 +368,7 @@ final class FileStorageTest extends TestCase
         ?string $batchId  = null,
         string $traceId   = 'trace-default',
         string $timestamp = '2024-03-01T10:00:00.000Z',
+        ?array $context   = null,
     ): LogEntry {
         return LogEntry::fromArray([
             'id'         => $id,
@@ -344,7 +380,7 @@ final class FileStorageTest extends TestCase
             'level'      => $level,
             'category'   => $category,
             'message'    => $message,
-            'context'    => null,
+            'context'    => $context,
             'timestamp'  => $timestamp,
             'created_at' => $timestamp,
         ]);

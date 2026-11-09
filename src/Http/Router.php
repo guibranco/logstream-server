@@ -11,6 +11,7 @@ use LogService\Repository\ClientRepository;
 use LogService\Retention\RetentionPolicy;
 use LogService\Retention\RetentionPolicyRepositoryInterface;
 use LogService\Retention\RetentionRunner;
+use LogService\Storage\ContextFilter;
 use LogService\Storage\StorageInterface;
 use LogService\WebSocket\LogHub;
 use Psr\Http\Message\ServerRequestInterface;
@@ -447,6 +448,19 @@ final class Router
             'date_to'    => $q['date_to']    ?? null,
             'search'     => $q['search']     ?? null,
         ], fn($v) => $v !== null && $v !== '');
+
+        try {
+            $context       = ContextFilter::fromQuery($q['context'] ?? null, $q['context_not'] ?? null);
+            $contextSearch = ContextFilter::parseSearchTerm($q['context_search'] ?? null);
+        } catch (\InvalidArgumentException $e) {
+            return $this->json(['error' => $e->getMessage()], 400, $cors);
+        }
+        if ($context !== []) {
+            $filters['context'] = $context;
+        }
+        if ($contextSearch !== null) {
+            $filters['context_search'] = $contextSearch;
+        }
 
         $limit  = max(1, min((int)($q['limit']  ?? 100), 1000));
         $offset = max(0,          (int)($q['offset'] ?? 0));
