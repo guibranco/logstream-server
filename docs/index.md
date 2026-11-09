@@ -155,6 +155,7 @@ Send multiple entries in one request by placing them in a `logs` array. Fields s
 | `search` | Substring match on `message` |
 | `context[<path>]` | `context` property equals value; dots reach nested objects (`context[order.id]=42`) |
 | `context_not[<path>]` | `context` property differs from value or is absent |
+| `context_search` | Free text across `context` keys and values, case-insensitive (min. 3 chars). MariaDB matches whole words via FULLTEXT (migration `006`); file storage matches substrings |
 | `limit` | Max entries returned (default `100`, max `1000`) |
 | `offset` | Pagination offset (default `0`) |
 
