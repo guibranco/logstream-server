@@ -761,6 +761,58 @@ components:
       description: Substring match against the `message` field.
       example: "card declined"
 
+    Context:
+      name: context
+      in: query
+      style: deepObject
+      explode: true
+      schema:
+        type: object
+        additionalProperties: { type: string }
+        maxProperties: 10
+      description: |
+        Exact match on properties of the `context` object, written as
+        `context[<path>]=<value>`. Dots in `<path>` walk into nested objects
+        (`context[order.id]=42` matches `{"order": {"id": 42}}`). Values are
+        compared as case-sensitive strings: numbers in plain form, booleans as
+        `true`/`false`, JSON null as `null`. Several conditions are combined
+        with AND; at most 10 `context` + `context_not` conditions per request.
+      example:
+        invoice_id: "1234"
+        order.id: "42"
+
+    ContextNot:
+      name: context_not
+      in: query
+      style: deepObject
+      explode: true
+      schema:
+        type: object
+        additionalProperties: { type: string }
+        maxProperties: 10
+      description: |
+        Exclusion on `context` properties, written as `context_not[<path>]=<value>`.
+        Matches entries where the property differs from the value **or is absent**.
+        Same path and value rules as `context`.
+      example:
+        role: bot
+
+    ContextSearch:
+      name: context_search
+      in: query
+      schema: { type: string, minLength: 3, maxLength: 200 }
+      description: |
+        Free-text search across every key and value of the `context` object,
+        case-insensitive. Multi-word terms match as a phrase.
+
+        - **MariaDB** uses the `ft_context` FULLTEXT index (migration
+          `006_context_fulltext.sql`) and matches whole words: `card` does not
+          match `card_declined`.
+        - **File storage** decodes each entry during the scan and matches
+          substrings, so `card` also matches `card_declined`. Slower on large
+          volumes; prefer MariaDB for context-heavy workloads.
+      example: card_declined
+
     Limit:
       name: limit
       in: query
@@ -1073,6 +1125,9 @@ paths:
         - $ref: '#/components/parameters/DateFrom'
         - $ref: '#/components/parameters/DateTo'
         - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Context'
+        - $ref: '#/components/parameters/ContextNot'
+        - $ref: '#/components/parameters/ContextSearch'
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/Offset'
       responses:
@@ -1099,6 +1154,14 @@ paths:
                     context: { invoice_id: 1234, code: card_declined }
                     timestamp: "2025-01-15T14:22:00.000Z"
                     created_at: "2025-01-15T14:22:00.012Z"
+        "400":
+          description: A context filter or `context_search` term is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: context_search must be between 3 and 200 characters
         "401":
           $ref: '#/components/responses/Unauthorized'
 
