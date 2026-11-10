@@ -117,10 +117,15 @@ if ($retentionConfig->isEnabled()) {
 
     $retentionRunner = new RetentionRunner($retentionEngine, $retentionConfig, $policyRepository);
 
-    $policyCount = count($retentionConfig->getPolicies());
-    echo "[Retention] Enabled — {$policyCount} polic"
-        . ($policyCount === 1 ? 'y' : 'ies')
-        . ", interval: {$retentionConfig->intervalHours}h\n";
+    // Count what the runner will actually use: in MariaDB mode the policies
+    // live in the retention_policies table, not in the JSON file.
+    try {
+        $policyCount = count($retentionRunner->listPolicies());
+        $policyLabel = "{$policyCount} polic" . ($policyCount === 1 ? 'y' : 'ies');
+    } catch (\Throwable $e) {
+        $policyLabel = 'policies unavailable (' . $e->getMessage() . ')';
+    }
+    echo "[Retention] Enabled — {$policyLabel}, interval: {$retentionConfig->intervalHours}h\n";
 } else {
     echo "[Retention] Disabled\n";
 }
@@ -193,7 +198,14 @@ if ($retentionRunner !== null) {
 
     $loop->addPeriodicTimer($retentionIntervalSeconds, function () use ($retentionRunner) {
         echo '[Retention] Running scheduled policies...' . "\n";
-        $results     = $retentionRunner->runAll();
+        // Loading the policies can fail (e.g. MariaDB unreachable). An exception
+        // escaping a timer stops the event loop, so log it and retry next tick.
+        try {
+            $results = $retentionRunner->runAll();
+        } catch (\Throwable $e) {
+            echo '[Retention] Scheduled run failed: ' . $e->getMessage() . "\n";
+            return;
+        }
         $totalPruned = array_sum(array_map(fn($r) => $r->pruned, $results));
         foreach ($results as $r) {
             $line = "[Retention] Policy '{$r->policy}': {$r->summary}";

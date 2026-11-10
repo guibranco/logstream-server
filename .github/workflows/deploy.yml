@@ -246,7 +246,7 @@ jobs:
           UI_SECRET=$UI_SECRET
           APP_VERSION=$APP_VERSION
           TRUSTED_PROXIES=$TRUSTED_PROXIES
-          RETENTION_CONFIG=./retention.json
+          RETENTION_CONFIG=./retention.production.json
           STORAGE_TYPE=mariadb
           LOG_PATH=./storage/logs
           DB_HOST=$DB_HOST

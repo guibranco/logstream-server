@@ -85,6 +85,11 @@ final class Router
         // ── Retention policy CRUD ─────────────────────────────────────────────
 
         if (str_starts_with($path, '/api/retention')) {
+            // Retention can delete logs, so it never runs unauthenticated:
+            // without UI_SECRET the endpoints stay off instead of open.
+            if (empty($this->uiSecret)) {
+                return $this->json(['error' => 'Retention API requires UI_SECRET to be set'], 503, $cors);
+            }
             if (!$this->isReadAuthorised($request)) {
                 return $this->json(['error' => 'Unauthorized'], 401, $cors);
             }
