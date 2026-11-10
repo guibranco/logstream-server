@@ -32,6 +32,7 @@ final class DatabasePrunerTest extends TestCase
                 level      TEXT,
                 category   TEXT,
                 message    TEXT,
+                message_template TEXT,
                 timestamp  TEXT,
                 created_at TEXT
             )',
@@ -105,6 +106,24 @@ final class DatabasePrunerTest extends TestCase
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────
 
+    #[Test]
+    public function it_prunes_by_message_glob_against_the_rendered_message_or_the_template(): void
+    {
+        $this->insert('1', message: 'GitHub push for guibranco/webhooks', template: 'GitHub {event} for {repository}');
+        $this->insert('2', message: 'GitHub webhook received');
+        $this->insert('3', message: 'Service worker started');
+
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'message_glob' => 'GitHub {event}*']);
+        $this->pruner->prune($policy);
+
+        self::assertSame(2, $this->countRows());
+
+        $policy = RetentionPolicy::fromArray(['name' => 'y', 'message_glob' => 'GitHub webhook*']);
+        $this->pruner->prune($policy);
+
+        self::assertSame(1, $this->countRows());
+    }
+
     private function insert(
         string $id,
         string $appKey    = 'test-app',
@@ -113,10 +132,11 @@ final class DatabasePrunerTest extends TestCase
         string $category  = 'general',
         string $message   = 'Test message',
         string $timestamp = '2024-03-01 10:00:00',
+        ?string $template = null,
     ): void {
         $stmt = $this->pdo->prepare(
-            'INSERT INTO log_entries (id, app_key, app_id, level, category, message, timestamp, created_at)
-             VALUES (:id, :app_key, :app_id, :level, :category, :message, :timestamp, :created_at)',
+            'INSERT INTO log_entries (id, app_key, app_id, level, category, message, message_template, timestamp, created_at)
+             VALUES (:id, :app_key, :app_id, :level, :category, :message, :message_template, :timestamp, :created_at)',
         );
         $stmt->execute([
             ':id'         => $id,
@@ -125,6 +145,7 @@ final class DatabasePrunerTest extends TestCase
             ':level'      => $level,
             ':category'   => $category,
             ':message'    => $message,
+            ':message_template' => $template,
             ':timestamp'  => $timestamp,
             ':created_at' => $timestamp,
         ]);

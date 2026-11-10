@@ -162,8 +162,19 @@ components:
           example: payments
         message:
           type: string
-          description: Human-readable description of the event.
+          description: >
+            Human-readable description of the event. When the entry was sent
+            with a message template, this is the rendered text.
           example: Charge failed for invoice #1234
+        message_template:
+          type: string
+          nullable: true
+          description: >
+            The message template the message was rendered from, e.g.
+            `Charge failed for invoice #{invoice_id}`. Every entry logged from
+            the same line shares it, so it groups entries whatever their values.
+            `null` when the message had no placeholders the context resolved.
+          example: "Charge failed for invoice #{invoice_id}"
         context:
           type: object
           nullable: true
@@ -328,12 +339,16 @@ components:
         message_regex:
           type: string
           nullable: true
-          description: Delete entries whose message matches this PCRE pattern.
+          description: >
+            Delete entries whose message, or the message template it was
+            rendered from, matches this PCRE pattern.
           example: '.*@hotmail\.com.*'
         message_glob:
           type: string
           nullable: true
-          description: Delete entries whose message matches this glob pattern.
+          description: >
+            Delete entries whose message, or the message template it was
+            rendered from, matches this glob pattern.
           example: '*@hotmail.com*'
         older_than_days:
           type: integer
@@ -525,8 +540,22 @@ components:
           example: payments
         message:
           type: string
-          description: Human-readable description of the event.
-          example: Charge failed for invoice #1234
+          description: |
+            Human-readable description of the event. It may be a message
+            template: placeholders such as `{invoice_id}` are replaced by the
+            matching `context` values (dotted names reach nested objects, null
+            renders as `-`, arrays as JSON) and the original text is stored as
+            `message_template`. Placeholders the context does not resolve are
+            left as written.
+          example: "Charge failed for invoice #{invoice_id}"
+        message_template:
+          type: string
+          nullable: true
+          description: |
+            Optional template the client already rendered `message` from (e.g.
+            the `{OriginalFormat}` of a .NET `ILogger` call). Stored as-is; when
+            `message` is omitted, the server renders this template instead.
+          example: "Charge failed for invoice #{invoice_id}"
         context:
           type: object
           nullable: true
@@ -538,7 +567,7 @@ components:
 
     SingleIngestRequest:
       type: object
-      required: [app_id, message]
+      required: [app_id]
       description: |
         Ingest a single log entry.
 
@@ -570,7 +599,18 @@ components:
           example: payments
         message:
           type: string
-          example: Charge failed for invoice #1234
+          description: |
+            Required unless `message_template` is sent. May be a message
+            template; see `IngestEntry.message`.
+          example: "Charge failed for invoice #{invoice_id}"
+        message_template:
+          type: string
+          nullable: true
+          description: |
+            Optional template the client already rendered `message` from (e.g.
+            the `{OriginalFormat}` of a .NET `ILogger` call). Stored as-is; when
+            `message` is omitted, the server renders this template instead.
+          example: "Charge failed for invoice #{invoice_id}"
         context:
           type: object
           nullable: true
@@ -739,6 +779,15 @@ components:
       schema: { type: string }
       description: Filter by the sender's IP address (exact match).
       example: 203.0.113.7
+
+    MessageTemplate:
+      name: message_template
+      in: query
+      schema: { type: string }
+      description: >
+        Filter by message template (exact match): every entry logged from the
+        same template, whatever its values.
+      example: "Charge failed for invoice #{invoice_id}"
 
     DateFrom:
       name: date_from
@@ -1125,6 +1174,7 @@ paths:
         - $ref: '#/components/parameters/DateFrom'
         - $ref: '#/components/parameters/DateTo'
         - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/MessageTemplate'
         - $ref: '#/components/parameters/Context'
         - $ref: '#/components/parameters/ContextNot'
         - $ref: '#/components/parameters/ContextSearch'
