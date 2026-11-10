@@ -179,13 +179,13 @@ LOG_PATH=C:\logstream-server\storage\logs
 TRUSTED_PROXIES=127.0.0.1,::1
 ```
 
-Generate strong secrets in PowerShell:
+Generate strong secrets (prints `API_SECRET=lsa_…` and `UI_SECRET=lsu_…`; run it once dependencies are installed in step 6):
 
 ```powershell
-[System.Web.Security.Membership]::GeneratePassword(32, 4)
-# or
--join ((65..90) + (97..122) + (48..57) | Get-Random -Count 32 | % {[char]$_})
+php bin\generate-secret.php
 ```
+
+New secrets carry a prefix: `lsa_` for `API_SECRET`, `lsu_` for `UI_SECRET` and `lss_` for application tokens created through `/api/clients`. Set `API_SECRET_PREFIX`, `UI_SECRET_PREFIX` or `APP_TOKEN_PREFIX` to change them (empty disables the prefix). Existing secrets keep working unchanged.
 
 ---
 

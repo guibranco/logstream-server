@@ -102,11 +102,13 @@ DB_USER=logservice
 DB_PASS=<generate-a-strong-db-password>
 ```
 
-Generate strong secrets:
+Generate strong secrets (prints `API_SECRET=lsa_…` and `UI_SECRET=lsu_…`):
 
 ```bash
-openssl rand -base64 32
+docker compose run --rm --no-deps app php bin/generate-secret.php
 ```
+
+New secrets carry a prefix: `lsa_` for `API_SECRET`, `lsu_` for `UI_SECRET` and `lss_` for application tokens created through `/api/clients`. Set `API_SECRET_PREFIX`, `UI_SECRET_PREFIX` or `APP_TOKEN_PREFIX` to change them (empty disables the prefix). Existing secrets keep working unchanged.
 
 ---
 
@@ -160,6 +162,9 @@ services:
       WS_PORT:      8080
       API_SECRET:   ${API_SECRET}
       UI_SECRET:    ${UI_SECRET}
+      API_SECRET_PREFIX: ${API_SECRET_PREFIX-lsa_}
+      UI_SECRET_PREFIX:  ${UI_SECRET_PREFIX-lsu_}
+      APP_TOKEN_PREFIX:  ${APP_TOKEN_PREFIX-lss_}
       STORAGE_TYPE: ${STORAGE_TYPE:-mariadb}
       DB_HOST:      db
       DB_PORT:      3306
@@ -483,6 +488,9 @@ Add these to your `.env` file (or pass them directly to `docker compose`):
 |----------|----------|-------------|
 | `API_SECRET` | ✅ | Write key for `POST /api/logs` |
 | `UI_SECRET` | ✅ | Read key for `GET /api/logs` and WebSocket |
+| `API_SECRET_PREFIX` | — | Prefix for new API secrets from `bin/generate-secret.php` (default `lsa_`) |
+| `UI_SECRET_PREFIX` | — | Prefix for new UI secrets from `bin/generate-secret.php` (default `lsu_`) |
+| `APP_TOKEN_PREFIX` | — | Prefix for application tokens created or rotated via `/api/clients` (default `lss_`) |
 | `STORAGE_TYPE` | ✅ | `mariadb` or `file` |
 | `DB_PASS` | ✅ (mariadb) | MariaDB user password |
 | `DB_ROOT_PASS` | ✅ (mariadb) | MariaDB root password |

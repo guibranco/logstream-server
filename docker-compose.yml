@@ -13,6 +13,9 @@ services:
       WS_PORT:      8080
       API_SECRET:   ${API_SECRET:-test-secret}
       UI_SECRET:    ${UI_SECRET:-test-ui-secret}
+      API_SECRET_PREFIX: ${API_SECRET_PREFIX-lsa_}
+      UI_SECRET_PREFIX:  ${UI_SECRET_PREFIX-lsu_}
+      APP_TOKEN_PREFIX:  ${APP_TOKEN_PREFIX-lss_}
       STORAGE_TYPE: ${STORAGE_TYPE:-mariadb}
       DB_HOST:      db
       DB_PORT:      3306
