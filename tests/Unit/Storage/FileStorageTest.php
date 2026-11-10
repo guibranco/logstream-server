@@ -238,6 +238,21 @@ final class FileStorageTest extends TestCase
         self::assertSame(2, $result['total']);
     }
 
+    #[Test]
+    public function it_filters_by_exact_message_template_and_round_trips_it(): void
+    {
+        $ts = '2024-03-01T10:00:00.000Z';
+        $this->storage->save($this->makeEntry('01A', message: 'GitHub push', timestamp: $ts, template: 'GitHub {event}'));
+        $this->storage->save($this->makeEntry('01B', message: 'GitHub ping', timestamp: $ts, template: 'GitHub {event}'));
+        $this->storage->save($this->makeEntry('01C', message: 'GitHub {event}', timestamp: $ts));
+
+        $result = $this->storage->search(['message_template' => 'GitHub {event}']);
+
+        self::assertSame(2, $result['total']);
+        self::assertSame('GitHub {event}', $result['entries'][0]['message_template']);
+        self::assertSame('GitHub {event}', $this->storage->findById('01A')?->messageTemplate);
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // search() — context properties
     // ──────────────────────────────────────────────────────────────────────────
@@ -386,6 +401,7 @@ final class FileStorageTest extends TestCase
         string $traceId   = 'trace-default',
         string $timestamp = '2024-03-01T10:00:00.000Z',
         ?array $context   = null,
+        ?string $template = null,
     ): LogEntry {
         return LogEntry::fromArray([
             'id'         => $id,
@@ -397,6 +413,7 @@ final class FileStorageTest extends TestCase
             'level'      => $level,
             'category'   => $category,
             'message'    => $message,
+            'message_template' => $template,
             'context'    => $context,
             'timestamp'  => $timestamp,
             'created_at' => $timestamp,

@@ -7,6 +7,7 @@ namespace LogService\Http;
 use LogService\Auth\CacheFlushableInterface;
 use LogService\Auth\WriteAuthInterface;
 use LogService\Models\LogEntry;
+use LogService\Models\MessageTemplate;
 use LogService\Repository\ClientRepository;
 use LogService\Retention\RetentionPolicy;
 use LogService\Retention\RetentionPolicyRepositoryInterface;
@@ -400,6 +401,12 @@ final class Router
                 : $resolvedAppKey;
 
             try {
+                [$message, $template] = MessageTemplate::resolve(
+                    $raw['message'] ?? null,
+                    $raw['message_template'] ?? null,
+                    $raw['context'] ?? null,
+                );
+
                 $entry = LogEntry::fromArray([
                     'id'         => $this->ulid(),
                     'trace_id'   => $raw['trace_id']   ?? $this->uuid4(),
@@ -409,7 +416,8 @@ final class Router
                     'user_agent' => $raw['user_agent'] ?? $topUserAgent,
                     'level'      => $raw['level']      ?? 'info',
                     'category'   => $raw['category']   ?? 'general',
-                    'message'    => $raw['message']    ?? '',
+                    'message'    => $message           ?? '',
+                    'message_template' => $template,
                     'context'    => $raw['context']    ?? null,
                     'timestamp'  => $raw['timestamp']  ?? (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339_EXTENDED),
                     'created_at' => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339_EXTENDED),
@@ -472,6 +480,7 @@ final class Router
             'date_from'  => $q['date_from']  ?? null,
             'date_to'    => $q['date_to']    ?? null,
             'search'     => $q['search']     ?? null,
+            'message_template' => $q['message_template'] ?? null,
         ], fn($v) => $v !== null && $v !== '' && $v !== []);
 
         try {

@@ -39,6 +39,7 @@ final class MariaDBStorageTest extends TestCase
                 level      TEXT NOT NULL,
                 category   TEXT NOT NULL,
                 message    TEXT NOT NULL,
+                message_template TEXT NULL,
                 context    TEXT NULL,
                 timestamp  TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

@@ -54,44 +54,9 @@ final class RetentionPolicy
      */
     public function matchesEntry(array $entry): bool
     {
-        if ($this->olderThanDays !== null) {
-            $cutoff    = $this->getCutoffDate();
-            $entryTime = $this->parseTimestamp($entry['timestamp'] ?? null);
-            if ($entryTime === null || $entryTime >= $cutoff) {
-                return false;
-            }
-        }
-
-        if ($this->appKey !== null && ($entry['app_key'] ?? '') !== $this->appKey) {
-            return false;
-        }
-
-        if ($this->appId !== null && ($entry['app_id'] ?? '') !== $this->appId) {
-            return false;
-        }
-
-        if ($this->level !== null && ($entry['level'] ?? '') !== $this->level) {
-            return false;
-        }
-
-        if ($this->category !== null && ($entry['category'] ?? '') !== $this->category) {
-            return false;
-        }
-
-        if ($this->messageRegex !== null) {
-            $pattern = '/' . str_replace('/', '\\/', $this->messageRegex) . '/u';
-            if (!preg_match($pattern, (string) ($entry['message'] ?? ''))) {
-                return false;
-            }
-        }
-
-        if ($this->messageGlob !== null) {
-            if (!fnmatch($this->messageGlob, (string) ($entry['message'] ?? ''), FNM_CASEFOLD)) {
-                return false;
-            }
-        }
-
-        return true;
+        // One implementation for every retention path, so message criteria
+        // also match the message template here.
+        return EntryMatcher::matches($this, $entry);
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -111,19 +76,5 @@ final class RetentionPolicy
             messageGlob:   $str('message_glob'),
             olderThanDays: isset($data['older_than_days']) ? (int) $data['older_than_days'] : null,
         );
-    }
-
-    // ──────────────────────────────────────────────────────────────────────────
-
-    private function parseTimestamp(mixed $raw): ?\DateTimeImmutable
-    {
-        if ($raw === null || $raw === '') {
-            return null;
-        }
-        try {
-            return new \DateTimeImmutable((string) $raw);
-        } catch (\Throwable) {
-            return null;
-        }
     }
 }

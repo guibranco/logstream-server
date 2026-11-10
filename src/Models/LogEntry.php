@@ -40,6 +40,8 @@ final class LogEntry
         public readonly \DateTimeImmutable $createdAt,
         /** IP address of the client that sent the entry (captured server-side) */
         public readonly ?string $senderIp = null,
+        /** The message template the message was rendered from, when there was one */
+        public readonly ?string $messageTemplate = null,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -60,6 +62,7 @@ final class LogEntry
             timestamp: self::parseDate($d['timestamp'] ?? 'now'),
             createdAt: self::parseDate($d['created_at'] ?? 'now'),
             senderIp:  self::parseIp($d['sender_ip'] ?? null),
+            messageTemplate: self::parseTemplate($d['message_template'] ?? null),
         );
     }
 
@@ -75,6 +78,7 @@ final class LogEntry
             'level'      => $this->level,
             'category'   => $this->category,
             'message'    => $this->message,
+            'message_template' => $this->messageTemplate,
             'context'    => $this->context,
             'timestamp'  => $this->timestamp->format(\DateTimeInterface::RFC3339_EXTENDED),
             'created_at' => $this->createdAt->format(\DateTimeInterface::RFC3339_EXTENDED),
@@ -97,6 +101,11 @@ final class LogEntry
             return is_array($decoded) ? $decoded : null;
         }
         return null;
+    }
+
+    private static function parseTemplate(mixed $value): ?string
+    {
+        return is_string($value) && $value !== '' ? $value : null;
     }
 
     private static function parseIp(mixed $value): ?string

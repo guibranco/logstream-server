@@ -9,6 +9,9 @@ namespace LogService\Retention;
  * clause, shared by DatabasePruner and DatabaseRetentionEngine.
  *
  * message_regex uses MySQL REGEXP; message_glob is converted to a LIKE pattern.
+ * Both match the rendered message or the template it was rendered from
+ * (message_template, migration 007). Each column gets its own parameter because
+ * native prepared statements do not allow a named parameter to appear twice.
  */
 final class DatabaseConditionBuilder
 {
@@ -46,13 +49,16 @@ final class DatabaseConditionBuilder
         }
 
         if ($policy->messageRegex !== null) {
-            $conditions[]             = 'message REGEXP :message_regex';
-            $params[':message_regex'] = $policy->messageRegex;
+            $conditions[]                      = '(message REGEXP :message_regex OR message_template REGEXP :message_template_regex)';
+            $params[':message_regex']          = $policy->messageRegex;
+            $params[':message_template_regex'] = $policy->messageRegex;
         }
 
         if ($policy->messageGlob !== null) {
-            $conditions[]            = 'message LIKE :message_glob';
-            $params[':message_glob'] = self::globToLike($policy->messageGlob);
+            $like                             = self::globToLike($policy->messageGlob);
+            $conditions[]                     = '(message LIKE :message_glob OR message_template LIKE :message_template_glob)';
+            $params[':message_glob']          = $like;
+            $params[':message_template_glob'] = $like;
         }
 
         return [$conditions, $params];

@@ -84,8 +84,12 @@ final class DatabaseConditionBuilderTest extends TestCase
             RetentionPolicy::fromArray(['name' => 'x', 'message_regex' => '.*@hotmail\\.com.*']),
         );
 
-        self::assertSame(['message REGEXP :message_regex'], $conditions);
+        self::assertSame(
+            ['(message REGEXP :message_regex OR message_template REGEXP :message_template_regex)'],
+            $conditions,
+        );
         self::assertSame('.*@hotmail\\.com.*', $params[':message_regex']);
+        self::assertSame('.*@hotmail\\.com.*', $params[':message_template_regex']);
     }
 
     #[Test]
@@ -95,8 +99,12 @@ final class DatabaseConditionBuilderTest extends TestCase
             RetentionPolicy::fromArray(['name' => 'x', 'message_glob' => '*@hotmail.com*']),
         );
 
-        self::assertSame(['message LIKE :message_glob'], $conditions);
+        self::assertSame(
+            ['(message LIKE :message_glob OR message_template LIKE :message_template_glob)'],
+            $conditions,
+        );
         self::assertSame('%@hotmail.com%', $params[':message_glob']);
+        self::assertSame('%@hotmail.com%', $params[':message_template_glob']);
     }
 
     #[Test]
@@ -124,6 +132,7 @@ final class DatabaseConditionBuilderTest extends TestCase
         ]));
 
         self::assertCount(7, $conditions);
-        self::assertCount(7, $params);
+        // message_regex and message_glob each bind one parameter per column.
+        self::assertCount(9, $params);
     }
 }
