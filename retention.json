@@ -1,5 +1,5 @@
 {
-  "enabled": false,
+  "enabled": true,
   "interval_hours": 24,
   "policies": [
     {
