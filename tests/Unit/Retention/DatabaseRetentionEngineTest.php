@@ -32,6 +32,7 @@ final class DatabaseRetentionEngineTest extends TestCase
                 level      TEXT,
                 category   TEXT,
                 message    TEXT,
+                message_template TEXT,
                 timestamp  TEXT,
                 created_at TEXT
             )',

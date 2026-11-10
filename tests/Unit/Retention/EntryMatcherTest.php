@@ -144,6 +144,22 @@ final class EntryMatcherTest extends TestCase
         self::assertFalse(EntryMatcher::matches($policy, $this->makeEntry(message: 'sent to user@gmail.com today')));
     }
 
+    #[Test]
+    public function it_matches_message_criteria_against_the_template_too(): void
+    {
+        $entry = $this->makeEntry(message: 'GitHub push for guibranco/webhooks');
+        $entry['message_template'] = 'GitHub {event} for {repository}';
+
+        $glob  = RetentionPolicy::fromArray(['name' => 'x', 'message_glob' => 'GitHub {event} for*']);
+        $regex = RetentionPolicy::fromArray(['name' => 'y', 'message_regex' => '^GitHub \\{event\\}']);
+        $miss  = RetentionPolicy::fromArray(['name' => 'z', 'message_glob' => 'Service worker*']);
+
+        self::assertTrue(EntryMatcher::matches($glob, $entry));
+        self::assertTrue(EntryMatcher::matches($regex, $entry));
+        self::assertFalse(EntryMatcher::matches($miss, $entry));
+        self::assertFalse(EntryMatcher::matches($glob, $this->makeEntry(message: 'GitHub push for x')));
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // matches — combined AND logic
     // ──────────────────────────────────────────────────────────────────────────

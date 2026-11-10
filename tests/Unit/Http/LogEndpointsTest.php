@@ -229,6 +229,69 @@ final class LogEndpointsTest extends TestCase
     }
 
     #[Test]
+    public function ingest_renders_a_message_template_and_keeps_the_template(): void
+    {
+        $captured = null;
+        $storage  = $this->createStub(StorageInterface::class);
+        $storage->method('save')->willReturnCallback(function (LogEntry $e) use (&$captured): void { $captured = $e; });
+
+        $request = (new ServerRequest('POST', 'http://localhost/api/logs'))
+            ->withBody(Utils::streamFor(json_encode([
+                'app_key' => 'my-app',
+                'app_id'  => 'prod',
+                'message' => 'GitHub {event} ({action}) for {repository}',
+                'context' => ['event' => 'push', 'action' => null, 'repository' => 'guibranco/webhooks'],
+            ])));
+
+        $response = $this->makeRouter($storage)->handle($request);
+        $body     = json_decode((string) $response->getBody(), true);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame('GitHub push (-) for guibranco/webhooks', $captured->message);
+        self::assertSame('GitHub {event} ({action}) for {repository}', $captured->messageTemplate);
+        self::assertSame('GitHub {event} ({action}) for {repository}', $body['entries'][0]['message_template']);
+    }
+
+    #[Test]
+    public function ingest_keeps_a_client_rendered_message_and_its_template(): void
+    {
+        $captured = [];
+        $storage  = $this->createStub(StorageInterface::class);
+        $storage->method('save')->willReturnCallback(function (LogEntry $e) use (&$captured): void { $captured[] = $e; });
+
+        $request = (new ServerRequest('POST', 'http://localhost/api/logs'))
+            ->withBody(Utils::streamFor(json_encode([
+                'app_key' => 'my-app',
+                'app_id'  => 'prod',
+                'logs'    => [
+                    [
+                        'message'          => 'Published 3 messages',
+                        'message_template' => 'Published {Count} messages',
+                        'context'          => ['Count' => 3],
+                    ],
+                    [
+                        'message_template' => 'Published {Count} messages',
+                        'context'          => ['Count' => 5],
+                    ],
+                    [
+                        'message' => 'No placeholders here',
+                        'context' => ['Count' => 5],
+                    ],
+                ],
+            ])));
+
+        $this->makeRouter($storage)->handle($request);
+
+        self::assertCount(3, $captured);
+        self::assertSame('Published 3 messages', $captured[0]->message);
+        self::assertSame('Published {Count} messages', $captured[0]->messageTemplate);
+        self::assertSame('Published 5 messages', $captured[1]->message);
+        self::assertSame('Published {Count} messages', $captured[1]->messageTemplate);
+        self::assertSame('No placeholders here', $captured[2]->message);
+        self::assertNull($captured[2]->messageTemplate);
+    }
+
+    #[Test]
     public function ingest_saves_a_batch_of_entries(): void
     {
         $storage = $this->createMock(StorageInterface::class);
@@ -350,6 +413,22 @@ final class LogEndpointsTest extends TestCase
 
         $response = $this->makeRouter($storage)->handle(
             $this->authed('GET', '/api/logs?app_key=my-app&level=error&limit=50&offset=10'),
+        );
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function search_forwards_the_message_template_filter(): void
+    {
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::once())
+            ->method('search')
+            ->with(self::callback(fn(array $f) => ($f['message_template'] ?? null) === 'GitHub {event}'), 100, 0)
+            ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
+
+        $response = $this->makeRouter($storage)->handle(
+            $this->authed('GET', '/api/logs?message_template=' . rawurlencode('GitHub {event}')),
         );
 
         self::assertSame(200, $response->getStatusCode());

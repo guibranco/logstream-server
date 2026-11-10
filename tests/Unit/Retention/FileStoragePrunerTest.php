@@ -208,6 +208,30 @@ final class FileStoragePrunerTest extends TestCase
         self::assertStringContainsString('gmail.com', $remaining[0]['message']);
     }
 
+    #[Test]
+    public function it_prunes_entries_whose_message_template_matches(): void
+    {
+        $templated = $this->makeEntry('2020-01-01T00:00:00.000Z', message: 'GitHub push for guibranco/webhooks');
+        $templated['message_template'] = 'GitHub {event} for {repository}';
+
+        $this->writeEntries('2020/01/01', [
+            $templated,
+            $this->makeEntry('2020-01-01T01:00:00.000Z', message: 'GitHub webhook received'),
+        ]);
+
+        $policy = RetentionPolicy::fromArray([
+            'name'         => 'x',
+            'message_glob' => 'GitHub {event}*',
+        ]);
+        $count = $this->pruner->prune($policy);
+
+        self::assertSame(1, $count);
+
+        $remaining = $this->readEntries('2020/01/01');
+        self::assertCount(1, $remaining);
+        self::assertSame('GitHub webhook received', $remaining[0]['message']);
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Multiple files
     // ──────────────────────────────────────────────────────────────────────────

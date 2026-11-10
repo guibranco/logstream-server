@@ -83,6 +83,30 @@ User-Agent: BillingService/2.1.0 (PHP 8.3)
 }
 ```
 
+**Message templates.** A message can be a template, as in Seq
+([message templates](https://messagetemplates.org/)):
+placeholders name `context` keys and are replaced when the entry is stored.
+
+```json
+{
+  "level":   "info",
+  "message": "GitHub {event} ({action}) for {repository.full_name}",
+  "context": { "event": "push", "action": null, "repository": { "full_name": "guibranco/webhooks" } }
+}
+```
+
+is stored with `message` set to `GitHub push (-) for guibranco/webhooks` and
+`message_template` set to the original text, so all entries from that line can
+be found with `?message_template=` whatever their values.
+
+- Dotted names reach nested objects; a key that itself contains a dot wins.
+- `null` renders as `-`, booleans as `true`/`false`, arrays and objects as JSON.
+- A placeholder the context does not resolve is left as written, so messages
+  that contain braces for other reasons are stored unchanged, without a template.
+- A client that renders messages itself can send both `message` and
+  `message_template`; both are stored as sent. A `message_template` without a
+  `message` is rendered by the server.
+
 **Response (201):**
 ```json
 {
@@ -109,6 +133,7 @@ User-Agent: BillingService/2.1.0 (PHP 8.3)
 | `date_from`  | string | ISO 8601 timestamp (inclusive)             |
 | `date_to`    | string | ISO 8601 timestamp (inclusive)             |
 | `search`     | string | Substring match on `message`               |
+| `message_template` | string | Exact match on the message template  |
 | `context[<path>]`     | string | `context` property equals value (see below) |
 | `context_not[<path>]` | string | `context` property differs from value or is absent |
 | `context_search` | string | Free text across all `context` keys and values (3–200 chars) |
@@ -205,7 +230,8 @@ Connect from the UI to receive a live stream of every ingested log.
 | `user_agent` | string ≤255?    | Application name & version             |
 | `level`      | enum            | debug / info / notice / warning / error / critical |
 | `category`   | string ≤100     | Free-form grouping tag                 |
-| `message`    | string          | Human-readable description             |
+| `message`    | string          | Human-readable description (rendered when sent as a template) |
+| `message_template` | string? | Template the message was rendered from (see Message templates) |
 | `context`    | object?         | Arbitrary structured data              |
 | `timestamp`  | ISO 8601        | When the event occurred                |
 | `created_at` | ISO 8601        | When the server persisted it           |
@@ -229,6 +255,18 @@ TRUSTED_PROXIES=172.16.0.0/12            # Nginx container on a Docker network
 
 In MariaDB mode, apply `migrations/005_sender_ip.sql` to add the column.
 Entries stored before that keep `sender_ip: null`.
+
+### Message template storage
+
+In MariaDB mode, apply `migrations/007_message_template.sql` to add the
+`message_template` column. Entries stored before that, and messages without
+resolvable placeholders, keep `message_template: null`.
+
+Retention policies match `message_regex` and `message_glob` against both the
+rendered message and the template. A policy can therefore target a template
+(`"message_glob": "GitHub {event}*"`), which stays the same whatever the values.
+A policy written for an old fixed message stops matching once the client
+changes that message, so review policies when messages change.
 
 ### Testing
 

@@ -50,6 +50,28 @@ final class LogEntryTest extends TestCase
         self::assertSame($entry->context,  $exported['context']);
     }
 
+    #[Test]
+    public function it_round_trips_the_message_template(): void
+    {
+        $entry = LogEntry::fromArray(array_merge($this->fixture(), [
+            'message'          => 'Charge 1234 failed',
+            'message_template' => 'Charge {invoice_id} failed',
+        ]));
+
+        self::assertSame('Charge {invoice_id} failed', $entry->messageTemplate);
+        self::assertSame('Charge {invoice_id} failed', $entry->toArray()['message_template']);
+    }
+
+    #[Test]
+    public function it_has_no_message_template_by_default(): void
+    {
+        $entry = LogEntry::fromArray($this->fixture());
+
+        self::assertNull($entry->messageTemplate);
+        self::assertArrayHasKey('message_template', $entry->toArray());
+        self::assertNull($entry->toArray()['message_template']);
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Level validation
     // ──────────────────────────────────────────────────────────────────────────
