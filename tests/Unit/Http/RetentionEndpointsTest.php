@@ -63,6 +63,27 @@ final class RetentionEndpointsTest extends TestCase
         self::assertSame(401, $response->getStatusCode());
     }
 
+    #[Test]
+    public function retention_routes_return_503_when_ui_secret_is_not_set(): void
+    {
+        $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);
+        $repo->expects(self::never())->method('all');
+
+        $router = new Router(
+            storage:          $this->createStub(StorageInterface::class),
+            hub:              new LogHub(''),
+            writeAuth:        new SingleKeyWriteAuth(''),
+            uiSecret:         '',
+            storageType:      'file',
+            retentionRunner:  $this->makeRunner($this->createStub(RetentionEngineInterface::class), $repo),
+            policyRepository: $repo,
+        );
+
+        $response = $router->handle(new ServerRequest('POST', 'http://localhost/api/retention/run'));
+
+        self::assertSame(503, $response->getStatusCode());
+    }
+
     // ── POST /api/retention/run ───────────────────────────────────────────────
 
     #[Test]
