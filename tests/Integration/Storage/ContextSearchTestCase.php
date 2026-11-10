@@ -56,6 +56,11 @@ abstract class ContextSearchTestCase extends TestCase
         yield 'search number'               => ['context_search=1234', ['AA']];
         yield 'search no match'             => ['context_search=refunded', []];
         yield 'search combined with filter' => ['context_search=human&context[order.id]=7', ['BB']];
+        yield 'level list matches any'      => ['level[]=critical&level[]=error', ['AA', 'BB', 'CC']];
+        yield 'level list no match'         => ['level[]=debug&level[]=info', []];
+        yield 'app_key list matches any'    => ['app_key[]=orders-api&app_key[]=billing-api', ['AA', 'BB', 'CC']];
+        yield 'app_key list with context'   => ['app_key[]=orders-api&app_key[]=billing-api&context[order.id]=7', ['BB']];
+        yield 'app_key list no match'       => ['app_key[]=orders-api&app_key[]=users-api', []];
     }
 
     /** @param list<string> $expectedSuffixes */

@@ -167,6 +167,23 @@ final class FileStorageTest extends TestCase
     }
 
     #[Test]
+    public function it_filters_by_a_list_of_levels(): void
+    {
+        $ts = '2024-06-01T10:00:00.000Z';
+        $this->storage->save($this->makeEntry('01A', level: 'error',    timestamp: $ts));
+        $this->storage->save($this->makeEntry('01B', level: 'info',     timestamp: $ts));
+        $this->storage->save($this->makeEntry('01C', level: 'critical', timestamp: $ts));
+        $this->storage->save($this->makeEntry('01D', level: 'warning',  timestamp: $ts));
+
+        $result = $this->storage->search(['level' => ['error', 'critical']]);
+
+        $ids = array_column($result['entries'], 'id');
+        sort($ids);
+        self::assertSame(['01A', '01C'], $ids);
+        self::assertSame(2, $result['total']);
+    }
+
+    #[Test]
     public function it_filters_by_trace_id(): void
     {
         $ts = '2024-03-01T10:00:00.000Z';

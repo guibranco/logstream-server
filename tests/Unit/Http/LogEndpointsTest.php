@@ -419,6 +419,44 @@ final class LogEndpointsTest extends TestCase
     }
 
     #[Test]
+    public function search_forwards_level_and_app_key_lists(): void
+    {
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::once())
+            ->method('search')
+            ->with(
+                self::callback(fn(array $f) => $f['level'] === ['error', 'critical']
+                    && $f['app_key'] === ['billing-api', 'orders-api']
+                    && $f['app_id'] === 'web'),
+                100,
+                0,
+            )
+            ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
+
+        $query   = 'level[]=error&level[]=critical&level[]=error&level[]=&app_key[]=billing-api&app_key[]=orders-api&app_id[]=web';
+        parse_str($query, $params);
+        $request = $this->authed('GET', '/api/logs?' . $query)->withQueryParams($params);
+
+        self::assertSame(200, $this->makeRouter($storage)->handle($request)->getStatusCode());
+    }
+
+    #[Test]
+    public function search_ignores_an_empty_list(): void
+    {
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::once())
+            ->method('search')
+            ->with(self::callback(fn(array $f) => !array_key_exists('level', $f)), 100, 0)
+            ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
+
+        $query   = 'level[]=&level[]=%20';
+        parse_str($query, $params);
+        $request = $this->authed('GET', '/api/logs?' . $query)->withQueryParams($params);
+
+        self::assertSame(200, $this->makeRouter($storage)->handle($request)->getStatusCode());
+    }
+
+    #[Test]
     public function search_forwards_the_message_template_filter(): void
     {
         $storage = $this->createMock(StorageInterface::class);

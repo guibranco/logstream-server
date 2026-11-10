@@ -490,7 +490,7 @@ components:
           example: file
         features:
           type: object
-          required: [client_management, retention, websocket]
+          required: [client_management, retention, websocket, multi_value_filters]
           properties:
             client_management:
               type: boolean
@@ -503,6 +503,12 @@ components:
             websocket:
               type: boolean
               description: Always true — WebSocket is always available.
+              example: true
+            multi_value_filters:
+              type: boolean
+              description: |
+                True when `GET /api/logs` accepts `app_key[]`, `app_id[]` and
+                `level[]` lists (matching any of the values).
               example: true
 
     IngestEntry:
@@ -728,14 +734,18 @@ components:
       name: app_key
       in: query
       schema: { type: string, maxLength: 100 }
-      description: Filter by application slug (exact match).
+      description: |
+        Filter by application slug (exact match). To match any of several,
+        send `app_key[]` once per value: `app_key[]=billing-api&app_key[]=orders-api`.
       example: billing-api
 
     AppId:
       name: app_id
       in: query
       schema: { type: string, maxLength: 100 }
-      description: Filter by deployment environment or instance (exact match).
+      description: |
+        Filter by deployment environment or instance (exact match). To match any
+        of several, send `app_id[]` once per value.
       example: production
 
     UserAgent:
@@ -750,7 +760,9 @@ components:
       in: query
       schema:
         $ref: '#/components/schemas/LogLevel'
-      description: Filter by severity level (exact match).
+      description: |
+        Filter by severity level (exact match). To match any of several, send
+        `level[]` once per value: `level[]=error&level[]=critical`.
 
     Category:
       name: category
@@ -1025,6 +1037,7 @@ paths:
                       client_management: false
                       retention: true
                       websocket: true
+                      multi_value_filters: true
                 mariadbMode:
                   summary: MariaDB storage mode (client management available)
                   value:
@@ -1034,6 +1047,7 @@ paths:
                       client_management: true
                       retention: true
                       websocket: true
+                      multi_value_filters: true
 
   /api/logs:
     post:

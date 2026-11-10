@@ -350,6 +350,8 @@ final class Router
                 'client_management' => $this->storageType === 'mariadb',
                 'retention'         => $this->retentionRunner !== null,
                 'websocket'         => true,
+                // app_key[], app_id[] and level[] on GET /api/logs match any of the values.
+                'multi_value_filters' => true,
             ],
         ], 200, $cors);
     }
@@ -439,15 +441,38 @@ final class Router
         ], $status, $cors);
     }
 
+    /**
+     * A filter given once (`level=error`) or as a list (`level[]=error&level[]=critical`).
+     * Lists keep their distinct non-empty values; a single value stays a plain string,
+     * so older clients and storage paths see exactly what they did before.
+     *
+     * @return string|list<string>|null
+     */
+    private static function oneOrMany(mixed $raw): string|array|null
+    {
+        if (is_string($raw)) {
+            return $raw;
+        }
+        if (!is_array($raw)) {
+            return null;
+        }
+        $values = array_values(array_unique(array_filter(
+            array_map(static fn($v) => is_string($v) ? trim($v) : '', $raw),
+            static fn(string $v) => $v !== '',
+        )));
+
+        return count($values) === 1 ? $values[0] : $values;
+    }
+
     private function handleSearch(ServerRequestInterface $request, array $cors): Response
     {
         $q = $request->getQueryParams();
 
         $filters = array_filter([
-            'app_key'    => $q['app_key']    ?? null,
-            'app_id'     => $q['app_id']     ?? null,
+            'app_key'    => self::oneOrMany($q['app_key'] ?? null),
+            'app_id'     => self::oneOrMany($q['app_id'] ?? null),
             'user_agent' => $q['user_agent'] ?? null,
-            'level'      => $q['level']      ?? null,
+            'level'      => self::oneOrMany($q['level'] ?? null),
             'category'   => $q['category']   ?? null,
             'trace_id'   => $q['trace_id']   ?? null,
             'batch_id'   => $q['batch_id']   ?? null,
@@ -456,7 +481,7 @@ final class Router
             'date_to'    => $q['date_to']    ?? null,
             'search'     => $q['search']     ?? null,
             'message_template' => $q['message_template'] ?? null,
-        ], fn($v) => $v !== null && $v !== '');
+        ], fn($v) => $v !== null && $v !== '' && $v !== []);
 
         try {
             $context       = ContextFilter::fromQuery($q['context'] ?? null, $q['context_not'] ?? null);

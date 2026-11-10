@@ -17,6 +17,8 @@ interface StorageInterface
      *   app_key, app_id, user_agent, level, category,
      *   trace_id, batch_id, sender_ip, date_from, date_to,
      *   search (full-text on message),
+     *   app_key, app_id and level may also be a list of strings: an entry
+     *   matches when its value is any of them,
      *   context (list<ContextFilter>: equality / inequality on context properties),
      *   context_search (free text across context keys and values)
      *

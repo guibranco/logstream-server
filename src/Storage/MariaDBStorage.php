@@ -97,6 +97,29 @@ final class MariaDBStorage implements StorageInterface
 
     // ──────────────────────────────────────────────────────────────────────────
 
+    /**
+     * `col = :p` for one value, `col IN (:p_0, :p_1, …)` for a list
+     * (level[]=error&level[]=critical matches any of its values).
+     *
+     * @param string|list<string>  $value
+     * @param array<string, mixed> $params Receives the bound values.
+     */
+    private function exactCondition(string $col, string $placeholder, string|array $value, array &$params): string
+    {
+        if (!is_array($value)) {
+            $params[$placeholder] = $value;
+            return "{$col} = {$placeholder}";
+        }
+
+        $placeholders = [];
+        foreach (array_values($value) as $i => $item) {
+            $name           = "{$placeholder}_{$i}";
+            $placeholders[] = $name;
+            $params[$name]  = $item;
+        }
+        return "{$col} IN (" . implode(', ', $placeholders) . ')';
+    }
+
     private function buildWhere(array $filters): array
     {
         $where  = [];
@@ -114,8 +137,7 @@ final class MariaDBStorage implements StorageInterface
 
         foreach ($exact as $col => $placeholder) {
             if (!empty($filters[$col])) {
-                $where[]              = "{$col} = {$placeholder}";
-                $params[$placeholder] = $filters[$col];
+                $where[] = $this->exactCondition($col, $placeholder, $filters[$col], $params);
             }
         }
 
