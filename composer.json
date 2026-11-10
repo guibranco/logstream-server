@@ -27,6 +27,7 @@
     "optimize-autoloader": true
   },
   "scripts": {
+    "secret": "php bin/generate-secret.php",
     "test": "phpunit --testdox",
     "test:unit": "phpunit --testdox --testsuite unit",
     "test:integration": "phpunit --testdox --testsuite integration"

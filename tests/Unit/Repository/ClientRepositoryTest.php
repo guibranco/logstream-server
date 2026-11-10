@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace LogService\Tests\Unit\Repository;
 
+use LogService\Auth\SecretGenerator;
 use LogService\Database\Connection;
 use LogService\Repository\Client;
 use LogService\Repository\ClientRepository;
@@ -60,6 +61,43 @@ final class ClientRepositoryTest extends TestCase
         self::assertTrue($client->active);
         self::assertNotNull($client->rawToken);
         self::assertGreaterThan(30, strlen($client->rawToken));
+    }
+
+    #[Test]
+    public function create_prefixes_token_with_lss_by_default(): void
+    {
+        $client = $this->repo->create('Billing API', 'billing-api');
+
+        self::assertMatchesRegularExpression('/^lss_[A-Za-z0-9_-]{43}$/', $client->rawToken);
+    }
+
+    #[Test]
+    public function create_uses_configured_token_prefix(): void
+    {
+        $repo = new ClientRepository(
+            Connection::wrap($this->pdo),
+            SecretGenerator::withPrefix('acme_'),
+        );
+
+        $client = $repo->create('Billing API', 'billing-api');
+
+        self::assertStringStartsWith('acme_', $client->rawToken);
+    }
+
+    #[Test]
+    public function creating_a_client_leaves_existing_tokens_unchanged(): void
+    {
+        $this->pdo->exec(
+            "INSERT INTO clients (name, app_key, api_token) VALUES ('Legacy', 'legacy', 'old-unprefixed-token')"
+        );
+
+        $this->repo->create('Billing API', 'billing-api');
+
+        $row = $this->pdo->query(
+            "SELECT api_token FROM clients WHERE app_key = 'legacy'"
+        )->fetch();
+
+        self::assertSame('old-unprefixed-token', $row['api_token']);
     }
 
     #[Test]
@@ -175,6 +213,18 @@ final class ClientRepositoryTest extends TestCase
 
         self::assertNotNull($rotated->rawToken);
         self::assertNotSame($created->rawToken, $rotated->rawToken);
+    }
+
+    #[Test]
+    public function rotate_token_prefixes_new_token(): void
+    {
+        $this->pdo->exec(
+            "INSERT INTO clients (name, app_key, api_token) VALUES ('Legacy', 'legacy', 'old-unprefixed-token')"
+        );
+
+        $rotated = $this->repo->rotateToken('legacy');
+
+        self::assertMatchesRegularExpression('/^lss_[A-Za-z0-9_-]{43}$/', $rotated->rawToken);
     }
 
     #[Test]

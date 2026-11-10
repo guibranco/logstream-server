@@ -248,7 +248,9 @@ components:
               description: >
                 The raw API token — returned **exactly once** after create or rotate.
                 Store it immediately; it will not be retrievable again.
-              example: dGhpcyBpcyBhIHNhbXBsZSB0b2tlbg
+                Starts with the server's `APP_TOKEN_PREFIX` (default `lss_`);
+                tokens issued before the prefix existed have none and stay valid.
+              example: lss_dGhpcyBpcyBhIHNhbXBsZSB0b2tlbiBmb3IgZG9jcw
             _note:
               type: string
               example: "Store this token now — it will not be shown again."

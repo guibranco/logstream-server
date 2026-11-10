@@ -7,6 +7,7 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use Dotenv\Dotenv;
 use LogService\Auth\DatabaseWriteAuth;
+use LogService\Auth\SecretGenerator;
 use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Database\Connection;
 use LogService\Http\ClientIpResolver;
@@ -68,7 +69,13 @@ if ($storageType === 'mariadb') {
     $storage          = new MariaDBStorage($storageDb);
     $writeAuthDb      = new DatabaseWriteAuth($appDb);
     $writeAuth        = $writeAuthDb;
-    $clientRepository = new ClientRepository($appDb);
+    try {
+        $appTokens = SecretGenerator::forAppTokens($_ENV);
+    } catch (\InvalidArgumentException $e) {
+        fwrite(STDERR, '[Config]   APP_TOKEN_PREFIX: ' . $e->getMessage() . "\n");
+        exit(1);
+    }
+    $clientRepository = new ClientRepository($appDb, $appTokens);
 
     $authMode = 'per-client (X-Api-Key / X-Api-Token  →  clients table)';
     echo "[Storage]  MariaDB ({$_ENV['DB_HOST']}:{$_ENV['DB_PORT']}/{$_ENV['DB_NAME']})\n";

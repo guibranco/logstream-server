@@ -158,11 +158,13 @@ LOG_PATH=./storage/logs
 TRUSTED_PROXIES=127.0.0.1,::1
 ```
 
-Generate strong secrets with:
+Generate strong secrets with (prints `API_SECRET=lsa_…` and `UI_SECRET=lsu_…`; run it after `composer install`):
 
 ```bash
-openssl rand -base64 32
+php bin/generate-secret.php
 ```
+
+New secrets carry a prefix: `lsa_` for `API_SECRET`, `lsu_` for `UI_SECRET` and `lss_` for application tokens created through `/api/clients`. Set `API_SECRET_PREFIX`, `UI_SECRET_PREFIX` or `APP_TOKEN_PREFIX` to change them (empty disables the prefix). Existing secrets keep working unchanged.
 
 Restrict access to the env file:
 
