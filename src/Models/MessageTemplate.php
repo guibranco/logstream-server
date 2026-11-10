@@ -111,18 +111,17 @@ final class MessageTemplate
             return [true, $context[$name]];
         }
 
-        if (!str_contains($name, '.')) {
-            return [false, null];
-        }
-
+        // A dotted name that is not itself a key walks nested arrays.
+        $found = str_contains($name, '.');
         $value = $context;
-        foreach (explode('.', $name) as $segment) {
+        foreach ($found ? explode('.', $name) : [] as $segment) {
             if (!is_array($value) || !array_key_exists($segment, $value)) {
-                return [false, null];
+                $found = false;
+                break;
             }
             $value = $value[$segment];
         }
 
-        return [true, $value];
+        return $found ? [true, $value] : [false, null];
     }
 }
