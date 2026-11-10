@@ -232,7 +232,7 @@ final class LogEndpointsTest extends TestCase
     public function ingest_renders_a_message_template_and_keeps_the_template(): void
     {
         $captured = null;
-        $storage  = $this->createMock(StorageInterface::class);
+        $storage  = $this->createStub(StorageInterface::class);
         $storage->method('save')->willReturnCallback(function (LogEntry $e) use (&$captured): void { $captured = $e; });
 
         $request = (new ServerRequest('POST', 'http://localhost/api/logs'))
@@ -256,7 +256,7 @@ final class LogEndpointsTest extends TestCase
     public function ingest_keeps_a_client_rendered_message_and_its_template(): void
     {
         $captured = [];
-        $storage  = $this->createMock(StorageInterface::class);
+        $storage  = $this->createStub(StorageInterface::class);
         $storage->method('save')->willReturnCallback(function (LogEntry $e) use (&$captured): void { $captured[] = $e; });
 
         $request = (new ServerRequest('POST', 'http://localhost/api/logs'))
