@@ -176,7 +176,12 @@ final class FileStorage implements StorageInterface
 
         $exact = ['app_key', 'app_id', 'level', 'trace_id', 'batch_id', 'sender_ip'];
         foreach ($exact as $field) {
-            if (!empty($filters[$field]) && ($entry[$field] ?? '') !== $filters[$field]) {
+            if (empty($filters[$field])) {
+                continue;
+            }
+            // A list (app_key[]=a&app_key[]=b) matches any of its values.
+            $wanted = is_array($filters[$field]) ? $filters[$field] : [$filters[$field]];
+            if (!in_array($entry[$field] ?? '', $wanted, true)) {
                 return false;
             }
         }

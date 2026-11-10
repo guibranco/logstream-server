@@ -111,10 +111,22 @@ final class MariaDBStorage implements StorageInterface
         ];
 
         foreach ($exact as $col => $placeholder) {
-            if (!empty($filters[$col])) {
+            if (empty($filters[$col])) {
+                continue;
+            }
+            if (!is_array($filters[$col])) {
                 $where[]              = "{$col} = {$placeholder}";
                 $params[$placeholder] = $filters[$col];
+                continue;
             }
+            // A list (level[]=error&level[]=critical) matches any of its values.
+            $placeholders = [];
+            foreach (array_values($filters[$col]) as $i => $value) {
+                $name           = "{$placeholder}_{$i}";
+                $placeholders[] = $name;
+                $params[$name]  = $value;
+            }
+            $where[] = "{$col} IN (" . implode(', ', $placeholders) . ')';
         }
 
         // LIKE filters

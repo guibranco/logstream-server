@@ -127,6 +127,7 @@ final class InfoEndpointTest extends TestCase
         self::assertArrayHasKey('client_management', $body['features']);
         self::assertArrayHasKey('retention',         $body['features']);
         self::assertArrayHasKey('websocket',         $body['features']);
+        self::assertTrue($body['features']['multi_value_filters']);
     }
 
     #[Test]
