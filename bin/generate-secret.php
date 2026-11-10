@@ -24,7 +24,9 @@ use LogService\Auth\SecretGenerator;
 
 Dotenv::createImmutable(__DIR__ . '/..')->safeLoad();
 
-$env  = array_merge(getenv(), $_ENV);
+// Process variables win over .env: Dotenv never overrides them, but when
+// variables_order hides them from $_ENV it would load the .env value instead.
+$env  = array_merge($_ENV, getenv());
 $kind = strtolower($argv[1] ?? 'env');
 
 try {

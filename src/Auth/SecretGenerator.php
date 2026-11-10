@@ -41,7 +41,8 @@ final class SecretGenerator
     {
         if (preg_match(self::PREFIX_PATTERN, $prefix) !== 1) {
             throw new \InvalidArgumentException(
-                "Invalid secret prefix '{$prefix}': use up to 32 letters, digits, '_' or '-'."
+                'Invalid secret prefix ' . json_encode($prefix, JSON_INVALID_UTF8_SUBSTITUTE)
+                . ": use up to 32 letters, digits, '_' or '-'."
             );
         }
 
