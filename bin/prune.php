@@ -14,6 +14,17 @@ use LogService\Retention\FileStoragePruner;
 use LogService\Retention\RetentionConfig;
 use LogService\Retention\RetentionEngine;
 
+// ─── Arguments ────────────────────────────────────────────────────────────────
+//
+// prune.php always deletes and takes no options. Refuse any argument, so that
+// "php bin/prune.php --dry-run" can never be mistaken for a simulation.
+
+if ($argc > 1) {
+    fwrite(STDERR, "[Retention] prune.php takes no options and always deletes.\n");
+    fwrite(STDERR, "            For a dry run use: php bin/retention.php --dry-run\n");
+    exit(2);
+}
+
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
 $dotenv = Dotenv::createImmutable(__DIR__ . '/..');

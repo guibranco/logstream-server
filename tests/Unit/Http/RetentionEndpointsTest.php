@@ -15,6 +15,7 @@ use LogService\Retention\RetentionResult;
 use LogService\Retention\RetentionRunner;
 use LogService\Storage\StorageInterface;
 use LogService\WebSocket\LogHub;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use React\Http\Message\ServerRequest;
@@ -137,6 +138,83 @@ final class RetentionEndpointsTest extends TestCase
         );
 
         self::assertSame(200, $response->getStatusCode());
+    }
+
+    /** The UI sends {"dry_run": true} in the body, not in the query string. */
+    #[Test]
+    #[DataProvider('dryRunBodies')]
+    public function run_all_honours_the_dry_run_flag_in_the_json_body(string $body, bool $expectDryRun): void
+    {
+        $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);
+        $repo->method('all')->willReturn([RetentionPolicy::fromArray(['name' => 'a', 'older_than_days' => 7])]);
+
+        $engine = $this->createMock(RetentionEngineInterface::class);
+        $engine->expects(self::once())
+            ->method('purge')
+            ->with(self::isInstanceOf(RetentionPolicy::class), $expectDryRun)
+            ->willReturn(new RetentionResult(policy: 'a', pruned: 0, dryRun: $expectDryRun));
+
+        $response = $this->makeRouter($this->makeRunner($engine, $repo))->handle(
+            $this->authed('POST', '/api/retention/run', $body),
+        );
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    /** @return array<string, array{string, bool}> */
+    public static function dryRunBodies(): array
+    {
+        return [
+            'bool true'        => ['{"dry_run": true}', true],
+            'string "1"'       => ['{"dry_run": "1"}', true],
+            'int 1'            => ['{"dry_run": 1}', true],
+            'with null policy' => ['{"dry_run": true, "policy": null}', true],
+            'bool false'       => ['{"dry_run": false}', false],
+            'string "false"'   => ['{"dry_run": "false"}', false],
+            'absent'           => ['{}', false],
+            'no body'          => ['', false],
+        ];
+    }
+
+    #[Test]
+    public function run_all_is_a_dry_run_when_either_query_or_body_asks_for_it(): void
+    {
+        $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);
+        $repo->method('all')->willReturn([RetentionPolicy::fromArray(['name' => 'a', 'older_than_days' => 7])]);
+
+        $engine = $this->createMock(RetentionEngineInterface::class);
+        $engine->expects(self::once())
+            ->method('purge')
+            ->with(self::isInstanceOf(RetentionPolicy::class), true)
+            ->willReturn(new RetentionResult(policy: 'a', pruned: 0, dryRun: true));
+
+        $this->makeRouter($this->makeRunner($engine, $repo))->handle(
+            $this->authed('POST', '/api/retention/run?dry_run=0', '{"dry_run": true}'),
+        );
+    }
+
+    #[Test]
+    public function run_all_runs_only_the_policy_named_in_the_json_body(): void
+    {
+        $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);
+        $repo->expects(self::never())->method('all');
+        $repo->expects(self::once())->method('find')->with('only-me')
+            ->willReturn(RetentionPolicy::fromArray(['name' => 'only-me', 'older_than_days' => 7]));
+
+        $engine = $this->createMock(RetentionEngineInterface::class);
+        $engine->expects(self::once())
+            ->method('purge')
+            ->with(self::callback(fn(RetentionPolicy $p) => $p->name === 'only-me'), true)
+            ->willReturn(new RetentionResult(policy: 'only-me', pruned: 2, dryRun: true));
+
+        $response = $this->makeRouter($this->makeRunner($engine, $repo))->handle(
+            $this->authed('POST', '/api/retention/run', '{"dry_run": true, "policy": "only-me"}'),
+        );
+        $body = json_decode((string) $response->getBody(), true);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertCount(1, $body['policies']);
+        self::assertSame('only-me', $body['policies'][0]['policy']);
     }
 
     #[Test]

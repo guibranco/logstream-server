@@ -218,8 +218,18 @@ final class Router
             return $this->json(['error' => 'Retention is not configured'], 503, $cors);
         }
 
+        // dry_run and policy are accepted in the query string or in the JSON body
+        // (the UI sends {"dry_run": true, "policy": "..."}). If either source asks
+        // for a dry run, it is a dry run: a missed flag would delete real data.
         $params = $request->getQueryParams();
-        $dryRun = isset($params['dry_run']) && $params['dry_run'] !== '0' && $params['dry_run'] !== 'false';
+        $body   = json_decode((string) $request->getBody(), true);
+        $body   = is_array($body) ? $body : [];
+
+        $dryRun = $this->isTruthy($params['dry_run'] ?? null) || $this->isTruthy($body['dry_run'] ?? null);
+
+        if ($policyName === null && is_string($body['policy'] ?? null) && $body['policy'] !== '') {
+            $policyName = $body['policy'];
+        }
 
         try {
             if ($policyName !== null) {
@@ -641,6 +651,28 @@ final class Router
     // ──────────────────────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * A dry-run flag counts as set unless it is missing or explicitly off
+     * (false, 0, "0", "false", "no", "off"). "?dry_run" with no value is set,
+     * as before. Erring towards "set" means a typo never deletes data.
+     */
+    private function isTruthy(mixed $value): bool
+    {
+        if ($value === null) {
+            return false;
+        }
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_int($value) || is_float($value)) {
+            return $value != 0;
+        }
+        if (is_string($value)) {
+            return !in_array(strtolower(trim($value)), ['0', 'false', 'no', 'off'], true);
+        }
+        return true;
+    }
 
     private function policyToArray(RetentionPolicy $policy): array
     {

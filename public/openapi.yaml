@@ -1275,7 +1275,10 @@ paths:
         Manually trigger execution of all configured retention policies.
         Each policy is evaluated in order and matching log entries are deleted.
 
-        Pass `?dry_run=true` to count what would be deleted without removing anything.
+        Pass `?dry_run=true`, or `{"dry_run": true}` in the JSON body, to count
+        what would be deleted without removing anything. If either asks for a
+        dry run, nothing is deleted. `{"policy": "<name>"}` in the body runs only
+        that policy.
 
         Returns `503` when retention is not configured on this server instance
         (i.e. `RETENTION_CONFIG` is not set or points to a disabled config).
@@ -1289,6 +1292,19 @@ paths:
           in: query
           schema: { type: boolean, default: false }
           description: When `true`, count matching entries without deleting them.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run:
+                  type: boolean
+                  description: Same as the `dry_run` query parameter.
+                policy:
+                  type: string
+                  description: Run only this policy (POST /api/retention/run only).
       responses:
         "200":
           description: Retention policies ran successfully.
@@ -1495,7 +1511,8 @@ paths:
         Manually triggers execution of one named retention policy.
         Returns `404` if no policy with the given name exists.
 
-        Pass `?dry_run=true` to count what would be deleted without removing anything.
+        Pass `?dry_run=true`, or `{"dry_run": true}` in the JSON body, to count
+        what would be deleted without removing anything.
 
         Requires `Authorization: Bearer <UI_SECRET>`.
       tags: [Retention]
@@ -1507,6 +1524,19 @@ paths:
           in: query
           schema: { type: boolean, default: false }
           description: When `true`, count matching entries without deleting them.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run:
+                  type: boolean
+                  description: Same as the `dry_run` query parameter.
+                policy:
+                  type: string
+                  description: Run only this policy (POST /api/retention/run only).
       responses:
         "200":
           description: Policy ran successfully.
