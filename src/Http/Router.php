@@ -659,19 +659,13 @@ final class Router
      */
     private function isTruthy(mixed $value): bool
     {
-        if ($value === null) {
-            return false;
-        }
-        if (is_bool($value)) {
-            return $value;
-        }
-        if (is_int($value) || is_float($value)) {
-            return $value != 0;
-        }
-        if (is_string($value)) {
-            return !in_array(strtolower(trim($value)), ['0', 'false', 'no', 'off'], true);
-        }
-        return true;
+        return match (true) {
+            $value === null                    => false,
+            is_bool($value)                    => $value,
+            is_int($value), is_float($value)   => $value != 0,
+            is_string($value)                  => !in_array(strtolower(trim($value)), ['0', 'false', 'no', 'off'], true),
+            default                            => true,
+        };
     }
 
     private function policyToArray(RetentionPolicy $policy): array
