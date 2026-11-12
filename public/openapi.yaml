@@ -482,6 +482,100 @@ components:
           items:
             $ref: '#/components/schemas/RetentionPolicy'
 
+    RetentionVolumeTotals:
+      type: object
+      required: [count, bytes, due_count, due_bytes]
+      properties:
+        count:
+          type: integer
+          description: Stored entries.
+        bytes:
+          type: integer
+          description: Their size (see `size_basis`).
+        due_count:
+          type: integer
+          description: >
+            Entries at least one policy would delete right now. An entry due
+            under several policies is counted once.
+        due_bytes:
+          type: integer
+
+    RetentionVolumeBucket:
+      allOf:
+        - $ref: '#/components/schemas/RetentionVolumeTotals'
+        - type: object
+          required: [date, age_days]
+          properties:
+            date:
+              type: string
+              format: date
+              description: Local date of the entries' timestamps.
+            age_days:
+              type: integer
+              description: >
+                Days before today (0 = today). A policy with `older_than_days: N`
+                deletes buckets with `age_days > N`, so its marker sits between
+                age N and N+1.
+
+    RetentionVolumePolicy:
+      type: object
+      required: [name, older_than_days, active, matched_count, matched_bytes, due_count, due_bytes, matched_share]
+      properties:
+        name:
+          type: string
+        older_than_days:
+          type: integer
+          nullable: true
+          description: Marker position; null means the policy applies at any age.
+        active:
+          type: boolean
+          description: False for a policy with no criteria, which never deletes anything.
+        matched_count:
+          type: integer
+          description: Stored entries the policy's filters match, at any age.
+        matched_bytes:
+          type: integer
+        due_count:
+          type: integer
+          description: Matched entries already past the policy's cutoff.
+        due_bytes:
+          type: integer
+        matched_share:
+          type: number
+          description: matched_count ÷ all stored entries (0–1).
+
+    RetentionVolumeResponse:
+      type: object
+      required: [generated_at, days, size_basis, buckets, older, future, policies, totals]
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+          description: When the report was computed (it is cached for up to 5 minutes).
+        days:
+          type: integer
+        size_basis:
+          type: string
+          enum: [file, payload]
+          description: >
+            `file` — exact JSONL line sizes (file storage).
+            `payload` — length of message, template and context (MariaDB), not the on-disk row size.
+        buckets:
+          type: array
+          description: One bucket per day, oldest first.
+          items:
+            $ref: '#/components/schemas/RetentionVolumeBucket'
+        older:
+          $ref: '#/components/schemas/RetentionVolumeTotals'
+        future:
+          $ref: '#/components/schemas/RetentionVolumeTotals'
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/RetentionVolumePolicy'
+        totals:
+          $ref: '#/components/schemas/RetentionVolumeTotals'
+
     InfoResponse:
       type: object
       required: [version, storage_type, features]
@@ -1266,6 +1360,57 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "404":
           $ref: '#/components/responses/NotFound'
+
+  /api/retention/volume:
+    get:
+      operationId: getRetentionVolume
+      summary: Stored volume by age, with retention markers
+      description: |
+        Daily counts and sizes of stored entries, plus what each retention
+        policy matches and would delete now — the data behind a Seq-style
+        storage chart with one marker per policy at its `older_than_days`.
+
+        Entries older than the window are summed in `older`, entries dated
+        after today in `future`. The report reads every stored entry, so it is
+        cached for up to 5 minutes; editing a policy or a retention run that
+        deletes entries refreshes it.
+
+        Returns `503` when retention is not configured.
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Retention]
+      security:
+        - ReadKey: []
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 3650, default: 90 }
+          description: Number of daily buckets, counting back from today.
+      responses:
+        "200":
+          description: Volume report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionVolumeResponse'
+        "400":
+          description: Invalid `days`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Missing or invalid UI_SECRET.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Retention is not configured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /api/retention/run:
     post:

@@ -286,6 +286,19 @@ SELECT ran_at, policy_name, dry_run, deleted, error
 FROM retention_log ORDER BY id DESC LIMIT 20;
 ```
 
+### Retention volume chart
+
+`GET /api/retention/volume?days=90` returns stored entries per day (count and
+size), how many each policy matches at any age, and how many are already past
+a policy's cutoff (`due_*`, counted once when policies overlap). The UI draws
+it like Seq's storage view: volume by age with a numbered marker at each
+policy's `older_than_days`.
+
+Sizes are exact JSONL line sizes in file mode and the length of message,
+template and context in MariaDB mode. The report reads every stored entry, so
+the server caches it for up to 5 minutes; editing a policy, or a run that
+deletes entries, refreshes it.
+
 ### Testing
 
 ```bash

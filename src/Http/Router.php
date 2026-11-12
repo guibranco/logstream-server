@@ -11,7 +11,9 @@ use LogService\Models\MessageTemplate;
 use LogService\Repository\ClientRepository;
 use LogService\Retention\RetentionPolicy;
 use LogService\Retention\RetentionPolicyRepositoryInterface;
+use LogService\Retention\CachedRetentionVolumeAnalyzer;
 use LogService\Retention\RetentionRunner;
+use LogService\Retention\RetentionVolumeAnalyzerInterface;
 use LogService\Storage\ContextFilter;
 use LogService\Storage\StorageInterface;
 use LogService\WebSocket\LogHub;
@@ -36,6 +38,9 @@ use React\Http\Message\Response;
  */
 final class Router
 {
+    private const VOLUME_DEFAULT_DAYS = 90;
+    private const VOLUME_MAX_DAYS     = 3650;
+
     public function __construct(
         private readonly StorageInterface                     $storage,
         private readonly LogHub                              $hub,
@@ -48,6 +53,7 @@ final class Router
         private readonly ?ClientRepository                   $clientRepository  = null,
         private readonly ?CacheFlushableInterface            $writeAuthDb       = null,
         private readonly ClientIpResolver                    $ipResolver        = new ClientIpResolver(),
+        private readonly ?RetentionVolumeAnalyzerInterface   $volumeAnalyzer    = null,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -170,6 +176,11 @@ final class Router
         ServerRequestInterface $request,
         array                  $cors,
     ): Response {
+        // GET /api/retention/volume — stored volume by age, for the retention chart
+        if ($method === 'GET' && $path === '/api/retention/volume') {
+            return $this->handleRetentionVolume($request, $cors);
+        }
+
         // POST /api/retention/run — run all policies
         if ($method === 'POST' && $path === '/api/retention/run') {
             return $this->handleRetentionRun(null, $request, $cors);
@@ -239,6 +250,10 @@ final class Router
         $totalPruned = array_sum(array_map(fn($r) => $r->pruned, $results));
         $failed      = count(array_filter($results, fn($r) => $r->error !== null));
 
+        if (!$dryRun && $totalPruned > 0 && $this->volumeAnalyzer instanceof CachedRetentionVolumeAnalyzer) {
+            $this->volumeAnalyzer->invalidate();
+        }
+
         return $this->json([
             'ran_at'       => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339),
             'policies'     => array_map(fn($r) => $r->toArray(), $results),
@@ -247,6 +262,34 @@ final class Router
             // instead of looking like "nothing matched".
             'failed'       => $failed,
         ], 200, $cors);
+    }
+
+    private function handleRetentionVolume(ServerRequestInterface $request, array $cors): Response
+    {
+        if ($this->volumeAnalyzer === null || $this->policyRepository === null) {
+            return $this->json(['error' => 'Retention is not configured'], 503, $cors);
+        }
+
+        $raw = $request->getQueryParams()['days'] ?? null;
+        if ($raw === null || $raw === '') {
+            $days = self::VOLUME_DEFAULT_DAYS;
+        } elseif (is_string($raw) && ctype_digit($raw) && (int) $raw >= 1 && (int) $raw <= self::VOLUME_MAX_DAYS) {
+            $days = (int) $raw;
+        } else {
+            return $this->json(
+                ['error' => 'days must be an integer between 1 and ' . self::VOLUME_MAX_DAYS],
+                400,
+                $cors,
+            );
+        }
+
+        try {
+            $report = $this->volumeAnalyzer->analyze($this->policyRepository->all(), $days);
+        } catch (\Throwable $e) {
+            return $this->json(['error' => $e->getMessage()], 500, $cors);
+        }
+
+        return $this->json($report->toArray(), 200, $cors);
     }
 
     private function handleRetentionList(array $cors): Response
