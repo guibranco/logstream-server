@@ -268,6 +268,24 @@ rendered message and the template. A policy can therefore target a template
 A policy written for an old fixed message stops matching once the client
 changes that message, so review policies when messages change.
 
+### Retention runs
+
+In MariaDB mode, retention policies live in the `retention_policies` table
+(managed from the UI or `/api/retention/policies`). The server's scheduled run,
+the API, `bin/retention.php` and `bin/prune.php` all read them from there; the
+JSON file named by `RETENTION_CONFIG` only supplies `enabled` and
+`interval_hours`. In file mode the policies come from that JSON file.
+
+Every run (real or `--dry-run` / `?dry_run=1`) is written to `retention_log`
+in MariaDB mode, one row per policy, including the error when a policy fails.
+A failed policy reports `pruned: 0`, so check `error` in the result (the API
+response also returns a `failed` count, and the CLI scripts exit with code 1).
+
+```sql
+SELECT ran_at, policy_name, dry_run, deleted, error
+FROM retention_log ORDER BY id DESC LIMIT 20;
+```
+
 ### Testing
 
 ```bash

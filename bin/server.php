@@ -14,6 +14,7 @@ use LogService\Http\ClientIpResolver;
 use LogService\Http\Router;
 use LogService\Repository\ClientRepository;
 use LogService\Retention\DatabaseRetentionEngine;
+use LogService\Retention\DatabaseRetentionLogRepository;
 use LogService\Retention\DatabaseRetentionPolicyRepository;
 use LogService\Retention\FileRetentionEngine;
 use LogService\Retention\FileRetentionPolicyRepository;
@@ -97,6 +98,7 @@ if (empty($uiSecret)) {
 
 $retentionRunner     = null;
 $policyRepository    = null;
+$retentionLog        = null;
 $retentionConfig     = RetentionConfig::disabled();
 
 $retentionConfigPath = $_ENV['RETENTION_CONFIG'] ?? null;
@@ -115,6 +117,7 @@ if ($retentionConfig->isEnabled()) {
     if ($storageType === 'mariadb') {
         $retentionEngine  = new DatabaseRetentionEngine($appDb);
         $policyRepository = new DatabaseRetentionPolicyRepository($appDb);
+        $retentionLog     = new DatabaseRetentionLogRepository($appDb);
     } else {
         $retentionEngine  = new FileRetentionEngine($logPath ?? (__DIR__ . '/../storage/logs'));
         $policyRepository = new FileRetentionPolicyRepository(
@@ -122,7 +125,7 @@ if ($retentionConfig->isEnabled()) {
         );
     }
 
-    $retentionRunner = new RetentionRunner($retentionEngine, $retentionConfig, $policyRepository);
+    $retentionRunner = new RetentionRunner($retentionEngine, $retentionConfig, $policyRepository, $retentionLog);
 
     // Count what the runner will actually use: in MariaDB mode the policies
     // live in the retention_policies table, not in the JSON file.

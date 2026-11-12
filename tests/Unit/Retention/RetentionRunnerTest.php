@@ -6,6 +6,7 @@ namespace LogService\Tests\Unit\Retention;
 
 use LogService\Retention\RetentionConfig;
 use LogService\Retention\RetentionEngineInterface;
+use LogService\Retention\RetentionLogRepositoryInterface;
 use LogService\Retention\RetentionPolicy;
 use LogService\Retention\RetentionPolicyRepositoryInterface;
 use LogService\Retention\RetentionResult;
@@ -259,5 +260,121 @@ final class RetentionRunnerTest extends TestCase
 
         self::assertCount(1, $policies);
         self::assertSame('live', $policies[0]->name);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // retention_log recording
+    // ──────────────────────────────────────────────────────────────────────────
+
+    #[Test]
+    public function run_all_records_every_result_including_errors(): void
+    {
+        $config = RetentionConfig::fromArray([
+            'enabled'  => true,
+            'policies' => [
+                ['name' => 'ok',    'older_than_days' => 7],
+                ['name' => 'boom',  'older_than_days' => 7],
+            ],
+        ]);
+
+        $engine = $this->createMock(RetentionEngineInterface::class);
+        $engine->method('purge')->willReturnCallback(
+            function (RetentionPolicy $policy, bool $dryRun): RetentionResult {
+                if ($policy->name === 'boom') {
+                    throw new \RuntimeException('no such column');
+                }
+                return new RetentionResult(policy: $policy->name, pruned: 4, dryRun: $dryRun);
+            },
+        );
+
+        $log = new InMemoryRetentionLog();
+        (new RetentionRunner($engine, $config, null, $log))->runAll(dryRun: true);
+
+        self::assertCount(2, $log->results);
+        self::assertSame('ok', $log->results[0]->policy);
+        self::assertSame(4, $log->results[0]->pruned);
+        self::assertTrue($log->results[0]->dryRun);
+        self::assertSame('boom', $log->results[1]->policy);
+        self::assertSame('no such column', $log->results[1]->error);
+        self::assertTrue($log->results[1]->dryRun);
+    }
+
+    #[Test]
+    public function run_policy_records_the_result(): void
+    {
+        $config = RetentionConfig::fromArray([
+            'enabled'  => true,
+            'policies' => [['name' => 'single', 'older_than_days' => 7]],
+        ]);
+
+        $engine = $this->createMock(RetentionEngineInterface::class);
+        $engine->method('purge')->willReturn(new RetentionResult(policy: 'single', pruned: 2));
+
+        $log = new InMemoryRetentionLog();
+        (new RetentionRunner($engine, $config, null, $log))->runPolicy('single');
+
+        self::assertCount(1, $log->results);
+        self::assertSame(2, $log->results[0]->pruned);
+    }
+
+    #[Test]
+    public function run_policy_records_the_error_and_rethrows(): void
+    {
+        $config = RetentionConfig::fromArray([
+            'enabled'  => true,
+            'policies' => [['name' => 'single', 'older_than_days' => 7]],
+        ]);
+
+        $engine = $this->createMock(RetentionEngineInterface::class);
+        $engine->method('purge')->willThrowException(new \RuntimeException('denied'));
+
+        $log    = new InMemoryRetentionLog();
+        $runner = new RetentionRunner($engine, $config, null, $log);
+
+        try {
+            $runner->runPolicy('single');
+            self::fail('Expected the engine exception to be rethrown');
+        } catch (\RuntimeException $e) {
+            self::assertSame('denied', $e->getMessage());
+        }
+
+        self::assertCount(1, $log->results);
+        self::assertSame('denied', $log->results[0]->error);
+    }
+
+    #[Test]
+    public function a_failing_log_write_does_not_break_the_run(): void
+    {
+        $config = RetentionConfig::fromArray([
+            'enabled'  => true,
+            'policies' => [['name' => 'a', 'older_than_days' => 7]],
+        ]);
+
+        $engine = $this->createMock(RetentionEngineInterface::class);
+        $engine->method('purge')->willReturn(new RetentionResult(policy: 'a', pruned: 5));
+
+        $log = $this->createMock(RetentionLogRepositoryInterface::class);
+        $log->method('record')->willThrowException(new \RuntimeException('table missing'));
+
+        $previous = ini_set('error_log', '/dev/null');
+        try {
+            $results = (new RetentionRunner($engine, $config, null, $log))->runAll();
+        } finally {
+            ini_set('error_log', (string) $previous);
+        }
+
+        self::assertCount(1, $results);
+        self::assertSame(5, $results[0]->pruned);
+    }
+}
+
+final class InMemoryRetentionLog implements RetentionLogRepositoryInterface
+{
+    /** @var RetentionResult[] */
+    public array $results = [];
+
+    public function record(RetentionResult $result): void
+    {
+        $this->results[] = $result;
     }
 }

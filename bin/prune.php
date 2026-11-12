@@ -8,6 +8,8 @@ require __DIR__ . '/../vendor/autoload.php';
 use LogService\Database\Connection;
 use Dotenv\Dotenv;
 use LogService\Retention\DatabasePruner;
+use LogService\Retention\DatabaseRetentionLogRepository;
+use LogService\Retention\DatabaseRetentionPolicyRepository;
 use LogService\Retention\FileStoragePruner;
 use LogService\Retention\RetentionConfig;
 use LogService\Retention\RetentionEngine;
@@ -46,6 +48,7 @@ if (!$config->enabled) {
 // ─── Build pruner ─────────────────────────────────────────────────────────────
 
 $storageType = $_ENV['STORAGE_TYPE'] ?? 'file';
+$log         = null;
 
 if ($storageType === 'mariadb') {
     $dsn = sprintf(
@@ -60,7 +63,22 @@ if ($storageType === 'mariadb') {
         PDO::ATTR_EMULATE_PREPARES   => false,
     ]);
     $pdo->exec("SET time_zone = '+00:00'");
-    $pruner = new DatabasePruner(Connection::wrap($pdo));
+    $db     = Connection::wrap($pdo);
+    $pruner = new DatabasePruner($db);
+    $log    = new DatabaseRetentionLogRepository($db);
+
+    // The policies live in the retention_policies table (managed from the UI
+    // and the API), not in the JSON file, which only provides enabled/interval.
+    try {
+        $config = new RetentionConfig(
+            enabled:       $config->enabled,
+            intervalHours: $config->intervalHours,
+            policies:      (new DatabaseRetentionPolicyRepository($db))->all(),
+        );
+    } catch (\Throwable $e) {
+        fwrite(STDERR, "[Retention] Could not load policies: " . $e->getMessage() . "\n");
+        exit(1);
+    }
 } else {
     $logPath = $_ENV['LOG_PATH'] ?? dirname(__DIR__) . '/storage/logs';
     $pruner  = new FileStoragePruner($logPath);
@@ -68,7 +86,7 @@ if ($storageType === 'mariadb') {
 
 // ─── Run ──────────────────────────────────────────────────────────────────────
 
-$engine  = new RetentionEngine($pruner, $config);
+$engine  = new RetentionEngine($pruner, $config, $log);
 $results = $engine->run();
 
 if (empty($results)) {
@@ -77,14 +95,18 @@ if (empty($results)) {
 }
 
 $totalPruned = 0;
+$failed      = 0;
 
 foreach ($results as $result) {
     $totalPruned += $result->pruned;
     $line = "[Retention] Policy '{$result->policy}': pruned {$result->pruned} entries";
     if ($result->error !== null) {
+        $failed++;
         $line .= " (ERROR: {$result->error})";
     }
     echo $line . "\n";
 }
 
 echo "[Retention] Done — {$totalPruned} entries pruned in total.\n";
+
+exit($failed > 0 ? 1 : 0);

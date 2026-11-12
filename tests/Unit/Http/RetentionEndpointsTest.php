@@ -115,6 +115,7 @@ final class RetentionEndpointsTest extends TestCase
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame(7, $body['total_pruned']);
+        self::assertSame(0, $body['failed']);
         self::assertCount(2, $body['policies']);
     }
 
@@ -155,6 +156,7 @@ final class RetentionEndpointsTest extends TestCase
         // result itself rather than throwing, so the endpoint still returns 200.
         self::assertSame(200, $response->getStatusCode());
         self::assertSame('db exploded', $body['policies'][0]['error']);
+        self::assertSame(1, $body['failed']);
     }
 
     // ── POST /api/retention/policies/{name}/run ───────────────────────────────
