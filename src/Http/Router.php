@@ -661,12 +661,16 @@ final class Router
      */
     private function parseRetentionRunOptions(ServerRequestInterface $request, ?string $policyName): array
     {
-        $raw  = trim((string) $request->getBody());
-        $body = $raw === '' ? [] : json_decode($raw, true);
+        // Decode without assoc so a JSON object ({}) and a JSON array ([]) stay
+        // distinguishable: only an object (or no body at all) is accepted.
+        $raw     = trim((string) $request->getBody());
+        $decoded = $raw === '' ? new \stdClass() : json_decode($raw);
 
-        if (!is_array($body) || ($body !== [] && array_is_list($body))) {
+        if (!$decoded instanceof \stdClass) {
             throw new \UnexpectedValueException('Request body must be a JSON object');
         }
+
+        $body = get_object_vars($decoded);
 
         $bodyDryRun = array_key_exists('dry_run', $body)
             && ($body['dry_run'] === null || $this->isTruthy($body['dry_run']));
