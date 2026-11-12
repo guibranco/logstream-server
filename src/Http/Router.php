@@ -218,17 +218,10 @@ final class Router
             return $this->json(['error' => 'Retention is not configured'], 503, $cors);
         }
 
-        // dry_run and policy are accepted in the query string or in the JSON body
-        // (the UI sends {"dry_run": true, "policy": "..."}). If either source asks
-        // for a dry run, it is a dry run: a missed flag would delete real data.
-        $params = $request->getQueryParams();
-        $body   = json_decode((string) $request->getBody(), true);
-        $body   = is_array($body) ? $body : [];
-
-        $dryRun = $this->isTruthy($params['dry_run'] ?? null) || $this->isTruthy($body['dry_run'] ?? null);
-
-        if ($policyName === null && is_string($body['policy'] ?? null) && $body['policy'] !== '') {
-            $policyName = $body['policy'];
+        try {
+            [$dryRun, $policyName] = $this->parseRetentionRunOptions($request, $policyName);
+        } catch (\UnexpectedValueException $e) {
+            return $this->json(['error' => $e->getMessage()], 400, $cors);
         }
 
         try {
@@ -651,6 +644,44 @@ final class Router
     // ──────────────────────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Reads dry_run and policy from the query string and the JSON body (the UI
+     * sends {"dry_run": true, "policy": "..."}). Anything ambiguous is either a
+     * dry run or rejected, never a real deletion:
+     *  - a dry run if the query or the body asks for one;
+     *  - "dry_run": null in the body counts as a dry run;
+     *  - a non-empty body that is not a JSON object is rejected;
+     *  - "policy" (POST /api/retention/run only) must be a non-empty string when
+     *    present and not null; an invalid value is rejected instead of widening
+     *    the run to all policies.
+     *
+     * @return array{0: bool, 1: ?string} [dryRun, policyName]
+     * @throws \UnexpectedValueException on an invalid body
+     */
+    private function parseRetentionRunOptions(ServerRequestInterface $request, ?string $policyName): array
+    {
+        $raw  = trim((string) $request->getBody());
+        $body = $raw === '' ? [] : json_decode($raw, true);
+
+        if (!is_array($body) || ($body !== [] && array_is_list($body))) {
+            throw new \UnexpectedValueException('Request body must be a JSON object');
+        }
+
+        $bodyDryRun = array_key_exists('dry_run', $body)
+            && ($body['dry_run'] === null || $this->isTruthy($body['dry_run']));
+        $dryRun     = $this->isTruthy($request->getQueryParams()['dry_run'] ?? null) || $bodyDryRun;
+
+        $selector = $body['policy'] ?? null;
+        if ($policyName === null && $selector !== null) {
+            if (!is_string($selector) || trim($selector) === '') {
+                throw new \UnexpectedValueException('policy must be a non-empty string');
+            }
+            $policyName = $selector;
+        }
+
+        return [$dryRun, $policyName];
+    }
 
     /**
      * A dry-run flag counts as set unless it is missing or explicitly off

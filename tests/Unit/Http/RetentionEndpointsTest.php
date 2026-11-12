@@ -169,6 +169,9 @@ final class RetentionEndpointsTest extends TestCase
             'string "1"'       => ['{"dry_run": "1"}', true],
             'int 1'            => ['{"dry_run": 1}', true],
             'with null policy' => ['{"dry_run": true, "policy": null}', true],
+            'null flag'        => ['{"dry_run": null}', true],
+            'empty object'     => ['{}', false],
+            'empty array'      => ['[]', false],
             'bool false'       => ['{"dry_run": false}', false],
             'string "false"'   => ['{"dry_run": "false"}', false],
             'absent'           => ['{}', false],
@@ -215,6 +218,56 @@ final class RetentionEndpointsTest extends TestCase
         self::assertSame(200, $response->getStatusCode());
         self::assertCount(1, $body['policies']);
         self::assertSame('only-me', $body['policies'][0]['policy']);
+    }
+
+    /** A malformed request must never fall through to a real run of every policy. */
+    #[Test]
+    #[DataProvider('invalidRunBodies')]
+    public function run_all_rejects_an_invalid_body_without_running(string $body): void
+    {
+        $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);
+        $repo->expects(self::never())->method('all');
+        $repo->expects(self::never())->method('find');
+
+        $engine = $this->createMock(RetentionEngineInterface::class);
+        $engine->expects(self::never())->method('purge');
+
+        $response = $this->makeRouter($this->makeRunner($engine, $repo))->handle(
+            $this->authed('POST', '/api/retention/run', $body),
+        );
+
+        self::assertSame(400, $response->getStatusCode());
+    }
+
+    /** @return array<string, array{string}> */
+    public static function invalidRunBodies(): array
+    {
+        return [
+            'truncated json'     => ['{"dry_run": true'],
+            'not json'           => ['dry_run=true'],
+            'json scalar'        => ['true'],
+            'json list'          => ['[true]'],
+            'empty policy'       => ['{"dry_run": false, "policy": ""}'],
+            'blank policy'       => ['{"policy": "   "}'],
+            'non-string policy'  => ['{"policy": 42}'],
+            'array policy'       => ['{"policy": ["a"]}'],
+        ];
+    }
+
+    #[Test]
+    public function run_one_rejects_an_invalid_body_without_running(): void
+    {
+        $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);
+        $repo->expects(self::never())->method('find');
+
+        $engine = $this->createMock(RetentionEngineInterface::class);
+        $engine->expects(self::never())->method('purge');
+
+        $response = $this->makeRouter($this->makeRunner($engine, $repo))->handle(
+            $this->authed('POST', '/api/retention/policies/a/run', '{"dry_run": true'),
+        );
+
+        self::assertSame(400, $response->getStatusCode());
     }
 
     #[Test]
