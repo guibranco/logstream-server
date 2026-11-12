@@ -560,12 +560,17 @@ final class Router
         }
 
         // A relative range replaces date_from/date_to, the way the UI treats it.
-        if (is_string($q['range'] ?? null) && trim($q['range']) !== '') {
+        if (array_key_exists('range', $q) || array_key_exists('tz', $q)) {
+            $range = $q['range'] ?? null;
+            $tz    = $q['tz'] ?? null;
+            if (!is_string($range) || trim($range) === '' || ($tz !== null && !is_string($tz))) {
+                return $this->json(['error' => 'range must be a single non-empty value; tz, if given, a single value.'], 400, $cors);
+            }
             try {
                 $filters['date_from'] = DateRange::resolve(
-                    $q['range'],
+                    $range,
                     new \DateTimeImmutable('now', new \DateTimeZone('UTC')),
-                    is_string($q['tz'] ?? null) ? $q['tz'] : null,
+                    $tz,
                 );
             } catch (\InvalidArgumentException $e) {
                 return $this->json(['error' => $e->getMessage()], 400, $cors);

@@ -304,6 +304,23 @@ final class FileStorageTest extends TestCase
     }
 
     #[Test]
+    public function it_reads_offset_free_bounds_as_utc_whatever_the_default_time_zone(): void
+    {
+        $this->storage->save($this->makeEntry('01A', timestamp: '2024-06-01T09:59:00.000Z'));
+        $this->storage->save($this->makeEntry('01B', timestamp: '2024-06-01T10:01:00.000Z'));
+
+        $previous = date_default_timezone_get();
+        date_default_timezone_set('America/Sao_Paulo');
+        try {
+            $result = $this->storage->search(['date_from' => '2024-06-01 10:00:00.000']);
+        } finally {
+            date_default_timezone_set($previous);
+        }
+
+        self::assertSame(['01B'], array_column($result['entries'], 'id'));
+    }
+
+    #[Test]
     public function it_filters_by_date_to(): void
     {
         $this->storage->save($this->makeEntry('01A', timestamp: '2024-01-01T00:00:00.000Z'));

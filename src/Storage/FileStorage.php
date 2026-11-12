@@ -119,11 +119,11 @@ final class FileStorage implements StorageInterface
     private function resolveFiles(array $filters): array
     {
         $from = isset($filters['date_from'])
-            ? new \DateTimeImmutable($filters['date_from'])
+            ? new \DateTimeImmutable($filters['date_from'], new \DateTimeZone('UTC'))
             : null;
 
         $to = isset($filters['date_to'])
-            ? new \DateTimeImmutable($filters['date_to'])
+            ? new \DateTimeImmutable($filters['date_to'], new \DateTimeZone('UTC'))
             : null;
 
         if ($from === null && $to === null) {
@@ -232,7 +232,9 @@ final class FileStorage implements StorageInterface
     {
         try {
             $entryTs = new \DateTimeImmutable($entry['timestamp'] ?? 'now');
-            $boundTs = new \DateTimeImmutable($bound);
+            // Bounds without an offset are UTC (what the UI and DateRange send),
+            // whatever PHP's default time zone is.
+            $boundTs = new \DateTimeImmutable($bound, new \DateTimeZone('UTC'));
             return $before ? $entryTs <= $boundTs : $entryTs >= $boundTs;
         } catch (\Throwable) {
             return false;

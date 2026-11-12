@@ -97,10 +97,21 @@ final class DateRangeTest extends TestCase
         DateRange::resolve($range, self::now());
     }
 
+    /** @return array<string, array{string}> */
+    public static function invalidTimeZones(): array
+    {
+        return [
+            'unknown region' => ['Mars/Olympus'],
+            'abbreviation'   => ['CET'],
+            'fixed offset'   => ['+01:00'],
+        ];
+    }
+
     #[Test]
-    public function an_invalid_time_zone_is_rejected(): void
+    #[DataProvider('invalidTimeZones')]
+    public function time_zones_must_be_iana_regions(string $tz): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        DateRange::resolve('week', self::now(), 'Mars/Olympus');
+        DateRange::resolve('week', self::now(), $tz);
     }
 }

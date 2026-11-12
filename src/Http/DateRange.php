@@ -74,10 +74,13 @@ final class DateRange
         if ($timezone === null || trim($timezone) === '') {
             return new \DateTimeZone('UTC');
         }
-        try {
-            return new \DateTimeZone(trim($timezone));
-        } catch (\Exception) {
+        // IANA region names only: abbreviations (CET) and fixed offsets (+01:00)
+        // would put calendar boundaries on the wrong side of DST changes.
+        $name = trim($timezone);
+        if (!in_array($name, \DateTimeZone::listIdentifiers(), true)) {
             throw new \InvalidArgumentException("Invalid tz '{$timezone}'. Use an IANA time zone such as Europe/Dublin.");
         }
+
+        return new \DateTimeZone($name);
     }
 }

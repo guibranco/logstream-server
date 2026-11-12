@@ -440,13 +440,27 @@ final class LogEndpointsTest extends TestCase
         self::assertSame(200, $response->getStatusCode());
     }
 
+    /** @return array<string, array{string}> */
+    public static function malformedRangeQueries(): array
+    {
+        return [
+            'unknown range'  => ['range=forever'],
+            'blank range'    => ['range=%20'],
+            'range as list'  => ['range[]=7d'],
+            'tz as list'     => ['range=week&tz[]=UTC'],
+            'tz without range' => ['tz=Europe/Dublin'],
+            'abbreviated tz' => ['range=week&tz=CET'],
+        ];
+    }
+
     #[Test]
-    public function search_rejects_an_unknown_range(): void
+    #[\PHPUnit\Framework\Attributes\DataProvider('malformedRangeQueries')]
+    public function search_rejects_a_malformed_range(string $query): void
     {
         $storage = $this->createMock(StorageInterface::class);
         $storage->expects(self::never())->method('search');
 
-        $response = $this->makeRouter($storage)->handle($this->authed('GET', '/api/logs?range=forever'));
+        $response = $this->makeRouter($storage)->handle($this->authed('GET', "/api/logs?{$query}"));
 
         self::assertSame(400, $response->getStatusCode());
     }
