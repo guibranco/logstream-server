@@ -275,13 +275,17 @@ final class Router
             );
         }
 
+        return $this->volumeReportResponse($days, $cors);
+    }
+
+    private function volumeReportResponse(int $days, array $cors): Response
+    {
         try {
             $report = $this->volumeAnalyzer->analyze($this->policyRepository->all(), $days);
+            return $this->json($report->toArray(), 200, $cors);
         } catch (\Throwable $e) {
             return $this->json(['error' => $e->getMessage()], 500, $cors);
         }
-
-        return $this->json($report->toArray(), 200, $cors);
     }
 
     /** The `days` query parameter, the default when absent, or null when invalid. */
