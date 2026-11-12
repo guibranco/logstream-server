@@ -13,6 +13,8 @@ use LogService\Retention\RetentionPolicy;
 use LogService\Retention\RetentionPolicyRepositoryInterface;
 use LogService\Retention\RetentionResult;
 use LogService\Retention\RetentionRunner;
+use LogService\Retention\RetentionVolumeAnalyzerInterface;
+use LogService\Retention\RetentionVolumeReport;
 use LogService\Storage\StorageInterface;
 use LogService\WebSocket\LogHub;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -25,6 +27,7 @@ final class RetentionEndpointsTest extends TestCase
     private function makeRouter(
         ?RetentionRunner                      $retentionRunner  = null,
         ?RetentionPolicyRepositoryInterface   $policyRepository = null,
+        ?RetentionVolumeAnalyzerInterface     $volumeAnalyzer   = null,
     ): Router {
         return new Router(
             storage:          $this->createStub(StorageInterface::class),
@@ -34,6 +37,7 @@ final class RetentionEndpointsTest extends TestCase
             storageType:      'file',
             retentionRunner:  $retentionRunner,
             policyRepository: $policyRepository,
+            volumeAnalyzer:   $volumeAnalyzer,
         );
     }
 
@@ -521,5 +525,101 @@ final class RetentionEndpointsTest extends TestCase
         $response = $this->makeRouter(null, $repo)->handle($this->authed('PATCH', '/api/retention/policies/x'));
 
         self::assertSame(404, $response->getStatusCode());
+    }
+
+    // ── GET /api/retention/volume ─────────────────────────────────────────────
+
+    #[Test]
+    public function volume_returns_503_when_no_analyzer_is_configured(): void
+    {
+        $repo     = $this->createStub(RetentionPolicyRepositoryInterface::class);
+        $response = $this->makeRouter(null, $repo)->handle($this->authed('GET', '/api/retention/volume'));
+
+        self::assertSame(503, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function volume_returns_401_without_auth(): void
+    {
+        $response = $this->makeRouter()->handle(new ServerRequest('GET', 'http://localhost/api/retention/volume'));
+
+        self::assertSame(401, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function volume_passes_policies_and_default_window_to_the_analyzer(): void
+    {
+        $policy = RetentionPolicy::fromArray(['name' => 'debug', 'level' => 'debug', 'older_than_days' => 2]);
+        $repo   = $this->createStub(RetentionPolicyRepositoryInterface::class);
+        $repo->method('all')->willReturn([$policy]);
+
+        $analyzer = $this->createMock(RetentionVolumeAnalyzerInterface::class);
+        $analyzer->expects(self::once())
+            ->method('analyze')
+            ->with([$policy], 90)
+            ->willReturn(RetentionVolumeReport::fromDailyTotals([$policy], [], 90, RetentionVolumeReport::SIZE_BASIS_FILE));
+
+        $response = $this->makeRouter(null, $repo, $analyzer)->handle($this->authed('GET', '/api/retention/volume'));
+        $body     = json_decode((string) $response->getBody(), true);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertCount(90, $body['buckets']);
+        self::assertSame('debug', $body['policies'][0]['name']);
+        self::assertSame(2, $body['policies'][0]['older_than_days']);
+    }
+
+    #[Test]
+    public function volume_accepts_a_days_parameter(): void
+    {
+        $repo = $this->createStub(RetentionPolicyRepositoryInterface::class);
+        $repo->method('all')->willReturn([]);
+
+        $analyzer = $this->createMock(RetentionVolumeAnalyzerInterface::class);
+        $analyzer->expects(self::once())
+            ->method('analyze')
+            ->with([], 14)
+            ->willReturn(RetentionVolumeReport::fromDailyTotals([], [], 14, RetentionVolumeReport::SIZE_BASIS_FILE));
+
+        $response = $this->makeRouter(null, $repo, $analyzer)->handle($this->authed('GET', '/api/retention/volume?days=14'));
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    #[Test]
+    #[DataProvider('invalidVolumeDays')]
+    public function volume_rejects_an_invalid_days_parameter(string $days): void
+    {
+        $repo     = $this->createStub(RetentionPolicyRepositoryInterface::class);
+        $analyzer = $this->createMock(RetentionVolumeAnalyzerInterface::class);
+        $analyzer->expects(self::never())->method('analyze');
+
+        $response = $this->makeRouter(null, $repo, $analyzer)
+            ->handle($this->authed('GET', '/api/retention/volume?days=' . urlencode($days)));
+
+        self::assertSame(400, $response->getStatusCode());
+    }
+
+    public static function invalidVolumeDays(): array
+    {
+        return [
+            'zero'       => ['0'],
+            'negative'   => ['-1'],
+            'too large'  => ['3651'],
+            'not number' => ['abc'],
+            'decimal'    => ['1.5'],
+        ];
+    }
+
+    #[Test]
+    public function volume_returns_500_when_the_analyzer_fails(): void
+    {
+        $repo = $this->createStub(RetentionPolicyRepositoryInterface::class);
+        $repo->method('all')->willReturn([]);
+        $analyzer = $this->createStub(RetentionVolumeAnalyzerInterface::class);
+        $analyzer->method('analyze')->willThrowException(new \RuntimeException('boom'));
+
+        $response = $this->makeRouter(null, $repo, $analyzer)->handle($this->authed('GET', '/api/retention/volume'));
+
+        self::assertSame(500, $response->getStatusCode());
     }
 }

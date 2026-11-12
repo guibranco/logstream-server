@@ -135,4 +135,35 @@ final class DatabaseConditionBuilderTest extends TestCase
         // message_regex and message_glob each bind one parameter per column.
         self::assertCount(9, $params);
     }
+
+    #[Test]
+    public function it_appends_a_suffix_to_every_parameter(): void
+    {
+        [$conditions, $params] = DatabaseConditionBuilder::build(
+            RetentionPolicy::fromArray([
+                'name' => 'x', 'older_than_days' => 7, 'level' => 'debug', 'message_glob' => 'cache*',
+            ]),
+            '_m0',
+        );
+
+        self::assertSame('timestamp < :cutoff_m0', $conditions[0]);
+        self::assertSame('level = :level_m0', $conditions[1]);
+        self::assertSame('(message LIKE :message_glob_m0 OR message_template LIKE :message_template_glob_m0)', $conditions[2]);
+        self::assertSame(
+            [':cutoff_m0', ':level_m0', ':message_glob_m0', ':message_template_glob_m0'],
+            array_keys($params),
+        );
+    }
+
+    #[Test]
+    public function it_can_leave_out_the_cutoff(): void
+    {
+        [$conditions, $params] = DatabaseConditionBuilder::build(
+            RetentionPolicy::fromArray(['name' => 'x', 'older_than_days' => 7, 'level' => 'debug']),
+            includeCutoff: false,
+        );
+
+        self::assertSame(['level = :level'], $conditions);
+        self::assertSame([':level' => 'debug'], $params);
+    }
 }

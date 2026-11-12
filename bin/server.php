@@ -13,11 +13,14 @@ use LogService\Database\Connection;
 use LogService\Http\ClientIpResolver;
 use LogService\Http\Router;
 use LogService\Repository\ClientRepository;
+use LogService\Retention\CachedRetentionVolumeAnalyzer;
 use LogService\Retention\DatabaseRetentionEngine;
 use LogService\Retention\DatabaseRetentionLogRepository;
 use LogService\Retention\DatabaseRetentionPolicyRepository;
+use LogService\Retention\DatabaseRetentionVolumeAnalyzer;
 use LogService\Retention\FileRetentionEngine;
 use LogService\Retention\FileRetentionPolicyRepository;
+use LogService\Retention\FileRetentionVolumeAnalyzer;
 use LogService\Retention\RetentionConfig;
 use LogService\Retention\RetentionRunner;
 use LogService\Storage\FileStorage;
@@ -98,6 +101,7 @@ if (empty($uiSecret)) {
 
 $retentionRunner     = null;
 $policyRepository    = null;
+$volumeAnalyzer      = null;
 $retentionLog        = null;
 $retentionConfig     = RetentionConfig::disabled();
 
@@ -118,10 +122,14 @@ if ($retentionConfig->isEnabled()) {
         $retentionEngine  = new DatabaseRetentionEngine($appDb);
         $policyRepository = new DatabaseRetentionPolicyRepository($appDb);
         $retentionLog     = new DatabaseRetentionLogRepository($appDb);
+        $volumeAnalyzer   = new CachedRetentionVolumeAnalyzer(new DatabaseRetentionVolumeAnalyzer($appDb));
     } else {
         $retentionEngine  = new FileRetentionEngine($logPath ?? (__DIR__ . '/../storage/logs'));
         $policyRepository = new FileRetentionPolicyRepository(
             $retentionConfigPath ?? (__DIR__ . '/../retention.json'),
+        );
+        $volumeAnalyzer   = new CachedRetentionVolumeAnalyzer(
+            new FileRetentionVolumeAnalyzer($logPath ?? (__DIR__ . '/../storage/logs')),
         );
     }
 
@@ -166,6 +174,7 @@ $router = new Router(
     clientRepository: $clientRepository,
     writeAuthDb:      $writeAuthDb,
     ipResolver:       $ipResolver,
+    volumeAnalyzer:   $volumeAnalyzer,
 );
 
 $httpServer = new HttpServer(
@@ -206,7 +215,7 @@ if ($retentionRunner !== null) {
 
     $retentionIntervalSeconds = $retentionIntervalHours * 3600;
 
-    $loop->addPeriodicTimer($retentionIntervalSeconds, function () use ($retentionRunner) {
+    $loop->addPeriodicTimer($retentionIntervalSeconds, function () use ($retentionRunner, $volumeAnalyzer) {
         echo '[Retention] Running scheduled policies...' . "\n";
         // Loading the policies can fail (e.g. MariaDB unreachable). An exception
         // escaping a timer stops the event loop, so log it and retry next tick.
@@ -223,6 +232,9 @@ if ($retentionRunner !== null) {
                 $line .= " (ERROR: {$r->error})";
             }
             echo $line . "\n";
+        }
+        if ($totalPruned > 0) {
+            $volumeAnalyzer?->invalidate();
         }
         echo "[Retention] Done — {$totalPruned} entries pruned.\n";
     });
