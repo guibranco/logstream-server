@@ -234,11 +234,15 @@ final class Router
         }
 
         $totalPruned = array_sum(array_map(fn($r) => $r->pruned, $results));
+        $failed      = count(array_filter($results, fn($r) => $r->error !== null));
 
         return $this->json([
             'ran_at'       => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339),
             'policies'     => array_map(fn($r) => $r->toArray(), $results),
             'total_pruned' => $totalPruned,
+            // A failed policy reports pruned: 0; this makes failures visible
+            // instead of looking like "nothing matched".
+            'failed'       => $failed,
         ], 200, $cors);
     }
 

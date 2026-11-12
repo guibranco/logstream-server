@@ -451,7 +451,7 @@ components:
 
     RetentionRunResponse:
       type: object
-      required: [ran_at, policies, total_pruned]
+      required: [ran_at, policies, total_pruned, failed]
       properties:
         ran_at:
           type: string
@@ -466,6 +466,12 @@ components:
           type: integer
           description: Total number of log entries removed across all policies.
           example: 156
+        failed:
+          type: integer
+          description: >
+            Number of policies that failed. A failed policy reports pruned 0 and
+            carries the reason in its error field.
+          example: 0
 
     RetentionPolicyListResponse:
       type: object
@@ -1308,6 +1314,7 @@ paths:
                     duration_ms: 31
                     summary: "114 entries pruned, 8 files removed, 1 files rewritten"
                 total_pruned: 156
+                failed: 0
         "401":
           $ref: '#/components/responses/Unauthorized'
         "503":
@@ -1518,6 +1525,7 @@ paths:
                     duration_ms: 12
                     summary: "42 entries pruned, 3 files removed, 0 files rewritten"
                 total_pruned: 42
+                failed: 0
         "401":
           $ref: '#/components/responses/Unauthorized'
         "404":

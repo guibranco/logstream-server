@@ -112,4 +112,31 @@ final class RetentionEngineTest extends TestCase
 
         self::assertSame([], $results);
     }
+
+    #[Test]
+    public function it_records_each_result_in_the_retention_log(): void
+    {
+        $config = RetentionConfig::fromArray([
+            'enabled'  => true,
+            'policies' => [
+                ['name' => 'will-throw',   'older_than_days' => 7],
+                ['name' => 'will-succeed', 'older_than_days' => 30],
+            ],
+        ]);
+
+        $pruner = $this->createMock(PrunerInterface::class);
+        $pruner->method('prune')->willReturnCallback(function (RetentionPolicy $policy): int {
+            if ($policy->name === 'will-throw') {
+                throw new \RuntimeException('disk full');
+            }
+            return 3;
+        });
+
+        $log = new InMemoryRetentionLog();
+        (new RetentionEngine($pruner, $config, $log))->run();
+
+        self::assertCount(2, $log->results);
+        self::assertSame('disk full', $log->results[0]->error);
+        self::assertSame(3, $log->results[1]->pruned);
+    }
 }

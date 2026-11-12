@@ -10,6 +10,7 @@ final class RetentionRunner
         private readonly RetentionEngineInterface            $engine,
         private readonly RetentionConfig                     $config,
         private readonly ?RetentionPolicyRepositoryInterface $repository = null,
+        private readonly ?RetentionLogRepositoryInterface    $log        = null,
     ) {}
 
     /** @return RetentionResult[] */
@@ -23,16 +24,13 @@ final class RetentionRunner
 
         foreach ($policies as $policy) {
             try {
-                $results[] = $this->engine->purge($policy, $dryRun);
+                $result = $this->engine->purge($policy, $dryRun);
             } catch (\Throwable $e) {
-                $results[] = new RetentionResult(
-                    policy:  $policy->name,
-                    pruned:  0,
-                    error:   $e->getMessage(),
-                    dryRun:  $dryRun,
-                    summary: 'Error: ' . $e->getMessage(),
-                );
+                $result = $this->errorResult($policy->name, $e, $dryRun);
             }
+
+            $this->record($result);
+            $results[] = $result;
         }
 
         return $results;
@@ -48,7 +46,17 @@ final class RetentionRunner
             throw new \InvalidArgumentException("Retention policy '{$name}' not found.");
         }
 
-        return $this->engine->purge($policy, $dryRun);
+        try {
+            $result = $this->engine->purge($policy, $dryRun);
+        } catch (\Throwable $e) {
+            // Keep the failure in the audit trail, then let the caller report it.
+            $this->record($this->errorResult($policy->name, $e, $dryRun));
+            throw $e;
+        }
+
+        $this->record($result);
+
+        return $result;
     }
 
     /** @return RetentionPolicy[] */
@@ -57,5 +65,35 @@ final class RetentionRunner
         return $this->repository !== null
             ? $this->repository->all()
             : $this->config->getPolicies();
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+
+    private function errorResult(string $policyName, \Throwable $e, bool $dryRun): RetentionResult
+    {
+        return new RetentionResult(
+            policy:  $policyName,
+            pruned:  0,
+            error:   $e->getMessage(),
+            dryRun:  $dryRun,
+            summary: 'Error: ' . $e->getMessage(),
+        );
+    }
+
+    /**
+     * Writing the audit row must never turn a successful purge into a failure,
+     * so a logging error is reported on stderr and otherwise ignored.
+     */
+    private function record(RetentionResult $result): void
+    {
+        if ($this->log === null) {
+            return;
+        }
+
+        try {
+            $this->log->record($result);
+        } catch (\Throwable $e) {
+            error_log("[Retention] Could not write retention_log for '{$result->policy}': " . $e->getMessage());
+        }
     }
 }
