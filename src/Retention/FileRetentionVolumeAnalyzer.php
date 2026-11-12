@@ -14,16 +14,42 @@ namespace LogService\Retention;
  */
 final class FileRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerInterface
 {
+    private const EMPTY_DAY    = ['count' => 0, 'bytes' => 0, 'due_count' => 0, 'due_bytes' => 0, 'policies' => []];
+    private const EMPTY_POLICY = ['matched_count' => 0, 'matched_bytes' => 0, 'due_count' => 0, 'due_bytes' => 0];
+
     public function __construct(private readonly string $basePath) {}
 
     public function analyze(array $policies, int $days): RetentionVolumeReport
     {
-        $daily = [];
+        $active = array_values(array_filter($policies, fn(RetentionPolicy $p) => !$p->isEmpty()));
+        $anyAge = self::withoutCutoffs($active);
+        $daily  = [];
 
-        // Field-only twins (no cutoff) tell what each policy matches at any age.
-        $anyAge = [];
+        foreach (JsonlDayFileScanner::listDayFiles($this->basePath) as [$fileDate, $filePath]) {
+            $this->scanFile($filePath, $fileDate->format('Y-m-d'), $active, $anyAge, $daily);
+        }
+
+        return RetentionVolumeReport::fromDailyTotals(
+            $policies,
+            $daily,
+            $days,
+            RetentionVolumeReport::SIZE_BASIS_FILE,
+        );
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Field-only twins (no cutoff) that tell what each policy matches at any age.
+     *
+     * @param  RetentionPolicy[] $policies
+     * @return array<string, RetentionPolicy>
+     */
+    private static function withoutCutoffs(array $policies): array
+    {
+        $twins = [];
         foreach ($policies as $policy) {
-            $anyAge[$policy->name] = new RetentionPolicy(
+            $twins[$policy->name] = new RetentionPolicy(
                 name:         $policy->name,
                 appKey:       $policy->appKey,
                 appId:        $policy->appId,
@@ -33,73 +59,75 @@ final class FileRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerInterf
                 messageGlob:  $policy->messageGlob,
             );
         }
+        return $twins;
+    }
 
-        foreach (JsonlDayFileScanner::listDayFiles($this->basePath) as [$fileDate, $filePath]) {
-            $handle = @fopen($filePath, 'r');
-            if (!$handle) {
+    /**
+     * @param RetentionPolicy[]              $active
+     * @param array<string, RetentionPolicy> $anyAge
+     * @param array<string, array>           $daily
+     */
+    private function scanFile(string $filePath, string $fileDate, array $active, array $anyAge, array &$daily): void
+    {
+        $handle = @fopen($filePath, 'r');
+        if (!$handle) {
+            return;
+        }
+
+        while (($line = fgets($handle)) !== false) {
+            $trimmed = trim($line);
+            if ($trimmed !== '') {
+                self::tally($trimmed, $fileDate, $active, $anyAge, $daily);
+            }
+        }
+
+        fclose($handle);
+    }
+
+    /**
+     * Adds one JSONL line to its day's totals and to every policy it matches.
+     *
+     * @param RetentionPolicy[]              $active
+     * @param array<string, RetentionPolicy> $anyAge
+     * @param array<string, array>           $daily
+     */
+    private static function tally(string $line, string $fileDate, array $active, array $anyAge, array &$daily): void
+    {
+        $bytes = strlen($line) + 1;
+        $entry = json_decode($line, true);
+        $entry = is_array($entry) ? $entry : [];
+        $date  = self::entryDate($entry) ?? $fileDate;
+
+        $day = $daily[$date] ?? self::EMPTY_DAY;
+        $day['count']++;
+        $day['bytes'] += $bytes;
+
+        $due = false;
+        foreach ($entry === [] ? [] : $active as $policy) {
+            $twin = $anyAge[$policy->name];
+            if ($twin->hasFieldFilters() && !EntryMatcher::matches($twin, $entry)) {
                 continue;
             }
 
-            while (($line = fgets($handle)) !== false) {
-                $trimmed = trim($line);
-                if ($trimmed === '') {
-                    continue;
-                }
+            $stats = $day['policies'][$policy->name] ?? self::EMPTY_POLICY;
+            $stats['matched_count']++;
+            $stats['matched_bytes'] += $bytes;
 
-                $bytes = strlen($trimmed) + 1;
-                $entry = json_decode($trimmed, true);
-                $entry = is_array($entry) ? $entry : [];
-                $date  = self::entryDate($entry) ?? $fileDate->format('Y-m-d');
-
-                $daily[$date] ??= ['count' => 0, 'bytes' => 0, 'due_count' => 0, 'due_bytes' => 0, 'policies' => []];
-                $daily[$date]['count']++;
-                $daily[$date]['bytes'] += $bytes;
-
-                if ($entry === []) {
-                    continue;
-                }
-
-                $due = false;
-                foreach ($policies as $policy) {
-                    if ($policy->isEmpty()) {
-                        continue;
-                    }
-
-                    $matched = !$anyAge[$policy->name]->hasFieldFilters()
-                        || EntryMatcher::matches($anyAge[$policy->name], $entry);
-                    if (!$matched) {
-                        continue;
-                    }
-
-                    $stats = $daily[$date]['policies'][$policy->name]
-                        ?? ['matched_count' => 0, 'matched_bytes' => 0, 'due_count' => 0, 'due_bytes' => 0];
-                    $stats['matched_count']++;
-                    $stats['matched_bytes'] += $bytes;
-
-                    if (EntryMatcher::shouldDelete($policy, $entry)) {
-                        $stats['due_count']++;
-                        $stats['due_bytes'] += $bytes;
-                        $due = true;
-                    }
-
-                    $daily[$date]['policies'][$policy->name] = $stats;
-                }
-
-                if ($due) {
-                    $daily[$date]['due_count']++;
-                    $daily[$date]['due_bytes'] += $bytes;
-                }
+            if (EntryMatcher::shouldDelete($policy, $entry)) {
+                $stats['due_count']++;
+                $stats['due_bytes'] += $bytes;
+                $due = true;
             }
 
-            fclose($handle);
+            $day['policies'][$policy->name] = $stats;
         }
 
-        return RetentionVolumeReport::fromDailyTotals(
-            $policies,
-            $daily,
-            $days,
-            RetentionVolumeReport::SIZE_BASIS_FILE,
-        );
+        if ($due) {
+            $day['due_count']++;
+            $day['due_bytes'] += $bytes;
+        }
+
+        $daily[$date] = $day;
     }
 
     private static function entryDate(array $entry): ?string

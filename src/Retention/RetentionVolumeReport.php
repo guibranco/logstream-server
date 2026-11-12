@@ -61,28 +61,11 @@ final class RetentionVolumeReport
         $today ??= new \DateTimeImmutable('today');
         $today   = $today->setTime(0, 0);
 
-        $buckets = [];
-        for ($age = $days - 1; $age >= 0; $age--) {
-            $date           = $today->modify("-{$age} days")->format('Y-m-d');
-            $buckets[$date] = ['date' => $date, 'age_days' => $age] + self::EMPTY_TOTALS;
-        }
-
-        $older  = self::EMPTY_TOTALS;
-        $future = self::EMPTY_TOTALS;
-        $totals = self::EMPTY_TOTALS;
-
-        $perPolicy = [];
-        foreach ($policies as $policy) {
-            $perPolicy[$policy->name] = [
-                'name'            => $policy->name,
-                'older_than_days' => $policy->olderThanDays,
-                'active'          => !$policy->isEmpty(),
-                'matched_count'   => 0,
-                'matched_bytes'   => 0,
-                'due_count'       => 0,
-                'due_bytes'       => 0,
-            ];
-        }
+        $buckets   = self::emptyBuckets($today, $days);
+        $perPolicy = self::emptyPolicyStats($policies);
+        $older     = self::EMPTY_TOTALS;
+        $future    = self::EMPTY_TOTALS;
+        $totals    = self::EMPTY_TOTALS;
 
         foreach ($daily as $date => $row) {
             $day = \DateTimeImmutable::createFromFormat('!Y-m-d', (string) $date);
@@ -94,22 +77,14 @@ final class RetentionVolumeReport
             $totals = self::add($totals, $values);
 
             $age = (int) $day->diff($today)->format('%r%a');
-            if ($age < 0) {
-                $future = self::add($future, $values);
-            } elseif ($age >= $days) {
-                $older = self::add($older, $values);
-            } else {
-                $buckets[$day->format('Y-m-d')] = self::add($buckets[$day->format('Y-m-d')], $values);
-            }
+            $key = $day->format('Y-m-d');
+            match (true) {
+                $age < 0      => $future        = self::add($future, $values),
+                $age >= $days => $older         = self::add($older, $values),
+                default       => $buckets[$key] = self::add($buckets[$key], $values),
+            };
 
-            foreach ((array) ($row['policies'] ?? []) as $name => $p) {
-                if (!isset($perPolicy[$name])) {
-                    continue;
-                }
-                foreach (['matched_count', 'matched_bytes', 'due_count', 'due_bytes'] as $key) {
-                    $perPolicy[$name][$key] += (int) ($p[$key] ?? 0);
-                }
-            }
+            $perPolicy = self::addPolicyStats($perPolicy, (array) ($row['policies'] ?? []));
         }
 
         foreach ($perPolicy as &$p) {
@@ -146,6 +121,58 @@ final class RetentionVolumeReport
     }
 
     // ──────────────────────────────────────────────────────────────────────────
+
+    /** @return array<string, array<string, mixed>> One zeroed bucket per day, oldest first, keyed by date. */
+    private static function emptyBuckets(\DateTimeImmutable $today, int $days): array
+    {
+        $buckets = [];
+        for ($age = $days - 1; $age >= 0; $age--) {
+            $date           = $today->modify("-{$age} days")->format('Y-m-d');
+            $buckets[$date] = ['date' => $date, 'age_days' => $age] + self::EMPTY_TOTALS;
+        }
+        return $buckets;
+    }
+
+    /**
+     * @param  RetentionPolicy[] $policies
+     * @return array<string, array<string, mixed>>
+     */
+    private static function emptyPolicyStats(array $policies): array
+    {
+        $stats = [];
+        foreach ($policies as $policy) {
+            $stats[$policy->name] = [
+                'name'            => $policy->name,
+                'older_than_days' => $policy->olderThanDays,
+                'active'          => !$policy->isEmpty(),
+                'matched_count'   => 0,
+                'matched_bytes'   => 0,
+                'due_count'       => 0,
+                'due_bytes'       => 0,
+            ];
+        }
+        return $stats;
+    }
+
+    /**
+     * Adds one day's per-policy numbers; names not in $perPolicy are ignored.
+     *
+     * @param  array<string, array<string, mixed>> $perPolicy
+     * @param  array<string, mixed>                $dayStats
+     * @return array<string, array<string, mixed>>
+     */
+    private static function addPolicyStats(array $perPolicy, array $dayStats): array
+    {
+        foreach ($dayStats as $name => $p) {
+            if (!isset($perPolicy[$name])) {
+                continue;
+            }
+            foreach (['matched_count', 'matched_bytes', 'due_count', 'due_bytes'] as $key) {
+                $perPolicy[$name][$key] += (int) ($p[$key] ?? 0);
+            }
+        }
+        return $perPolicy;
+    }
 
     /** @return array<string, int> */
     private static function totalsOf(array $row): array

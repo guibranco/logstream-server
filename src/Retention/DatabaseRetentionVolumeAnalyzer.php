@@ -22,6 +22,9 @@ final class DatabaseRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerIn
 {
     private const BYTES_EXPR = '(COALESCE(LENGTH(message), 0) + COALESCE(LENGTH(message_template), 0) + COALESCE(LENGTH(context), 0))';
 
+    private const FLAG_OPEN = 'CASE WHEN ';
+    private const FLAG_CLOSE = ' THEN 1 ELSE 0 END';
+
     public function __construct(private readonly Connection $db) {}
 
     public function analyze(array $policies, int $days): RetentionVolumeReport
@@ -37,8 +40,8 @@ final class DatabaseRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerIn
             [$matchConds, $matchParams] = DatabaseConditionBuilder::build($policy, "_m{$i}", includeCutoff: false);
             [$dueConds, $dueParams]     = DatabaseConditionBuilder::build($policy, "_d{$i}");
 
-            $inner[] = 'CASE WHEN ' . self::all($matchConds) . " THEN 1 ELSE 0 END AS m{$i}";
-            $inner[] = 'CASE WHEN ' . self::all($dueConds) . " THEN 1 ELSE 0 END AS d{$i}";
+            $inner[] = self::flag(self::all($matchConds)) . " AS m{$i}";
+            $inner[] = self::flag(self::all($dueConds)) . " AS d{$i}";
             $dueAny[] = "d{$i} = 1";
 
             $outer[] = "SUM(m{$i}) AS m{$i}_cnt";
@@ -49,7 +52,7 @@ final class DatabaseRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerIn
             $params += $matchParams + $dueParams;
         }
 
-        $dueExpr = $dueAny === [] ? '0' : 'CASE WHEN ' . implode(' OR ', $dueAny) . ' THEN 1 ELSE 0 END';
+        $dueExpr = $dueAny === [] ? '0' : self::flag(implode(' OR ', $dueAny));
 
         $sql = 'SELECT ' . implode(', ', $outer)
              . ' FROM (SELECT t.*, ' . $dueExpr . ' AS due'
@@ -86,6 +89,12 @@ final class DatabaseRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerIn
             $days,
             RetentionVolumeReport::SIZE_BASIS_PAYLOAD,
         );
+    }
+
+    /** 1 when the condition holds for the row, else 0. */
+    private static function flag(string $condition): string
+    {
+        return self::FLAG_OPEN . $condition . self::FLAG_CLOSE;
     }
 
     /** @param string[] $conditions */

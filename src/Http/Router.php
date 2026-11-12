@@ -176,24 +176,20 @@ final class Router
         ServerRequestInterface $request,
         array                  $cors,
     ): Response {
-        // GET /api/retention/volume — stored volume by age, for the retention chart
-        if ($method === 'GET' && $path === '/api/retention/volume') {
-            return $this->handleRetentionVolume($request, $cors);
-        }
-
-        // POST /api/retention/run — run all policies
-        if ($method === 'POST' && $path === '/api/retention/run') {
-            return $this->handleRetentionRun(null, $request, $cors);
-        }
-
-        // GET /api/retention/policies — list policies
-        if ($method === 'GET' && $path === '/api/retention/policies') {
-            return $this->handleRetentionList($cors);
-        }
-
-        // POST /api/retention/policies — create policy
-        if ($method === 'POST' && $path === '/api/retention/policies') {
-            return $this->handleRetentionCreate($request, $cors);
+        // Fixed paths. match() only evaluates the arm that matches.
+        $exact = match ("{$method} {$path}") {
+            // Stored volume by age, for the retention chart
+            'GET /api/retention/volume'    => $this->handleRetentionVolume($request, $cors),
+            // Run all policies
+            'POST /api/retention/run'      => $this->handleRetentionRun(null, $request, $cors),
+            // List policies
+            'GET /api/retention/policies'  => $this->handleRetentionList($cors),
+            // Create policy
+            'POST /api/retention/policies' => $this->handleRetentionCreate($request, $cors),
+            default                        => null,
+        };
+        if ($exact !== null) {
+            return $exact;
         }
 
         // GET /api/retention/policies/{name} — get policy
@@ -270,12 +266,8 @@ final class Router
             return $this->json(['error' => 'Retention is not configured'], 503, $cors);
         }
 
-        $raw = $request->getQueryParams()['days'] ?? null;
-        if ($raw === null || $raw === '') {
-            $days = self::VOLUME_DEFAULT_DAYS;
-        } elseif (is_string($raw) && ctype_digit($raw) && (int) $raw >= 1 && (int) $raw <= self::VOLUME_MAX_DAYS) {
-            $days = (int) $raw;
-        } else {
+        $days = $this->parseVolumeDays($request);
+        if ($days === null) {
             return $this->json(
                 ['error' => 'days must be an integer between 1 and ' . self::VOLUME_MAX_DAYS],
                 400,
@@ -290,6 +282,18 @@ final class Router
         }
 
         return $this->json($report->toArray(), 200, $cors);
+    }
+
+    /** The `days` query parameter, the default when absent, or null when invalid. */
+    private function parseVolumeDays(ServerRequestInterface $request): ?int
+    {
+        $raw = $request->getQueryParams()['days'] ?? null;
+        if ($raw === null || $raw === '') {
+            return self::VOLUME_DEFAULT_DAYS;
+        }
+
+        $valid = is_string($raw) && ctype_digit($raw) && (int) $raw >= 1 && (int) $raw <= self::VOLUME_MAX_DAYS;
+        return $valid ? (int) $raw : null;
     }
 
     private function handleRetentionList(array $cors): Response
