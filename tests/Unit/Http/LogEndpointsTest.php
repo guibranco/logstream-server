@@ -419,6 +419,53 @@ final class LogEndpointsTest extends TestCase
     }
 
     #[Test]
+    public function search_turns_a_range_into_date_from_and_drops_date_to(): void
+    {
+        $before  = new \DateTimeImmutable('-90 days -1 second', new \DateTimeZone('UTC'));
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::once())
+            ->method('search')
+            ->with(self::callback(function (array $f) use ($before) {
+                $from = new \DateTimeImmutable($f['date_from'], new \DateTimeZone('UTC'));
+                return !isset($f['date_to'])
+                    && $from >= $before
+                    && $from <= new \DateTimeImmutable('-90 days', new \DateTimeZone('UTC'));
+            }), 100, 0)
+            ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
+
+        $response = $this->makeRouter($storage)->handle(
+            $this->authed('GET', '/api/logs?range=90d&date_from=2020-01-01&date_to=2020-01-02'),
+        );
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    /** @return array<string, array{string}> */
+    public static function malformedRangeQueries(): array
+    {
+        return [
+            'unknown range'  => ['range=forever'],
+            'blank range'    => ['range=%20'],
+            'range as list'  => ['range[]=7d'],
+            'tz as list'     => ['range=week&tz[]=UTC'],
+            'tz without range' => ['tz=Europe/Dublin'],
+            'abbreviated tz' => ['range=week&tz=CET'],
+        ];
+    }
+
+    #[Test]
+    #[\PHPUnit\Framework\Attributes\DataProvider('malformedRangeQueries')]
+    public function search_rejects_a_malformed_range(string $query): void
+    {
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::never())->method('search');
+
+        $response = $this->makeRouter($storage)->handle($this->authed('GET', "/api/logs?{$query}"));
+
+        self::assertSame(400, $response->getStatusCode());
+    }
+
+    #[Test]
     public function search_forwards_level_and_app_key_lists(): void
     {
         $storage = $this->createMock(StorageInterface::class);

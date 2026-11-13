@@ -132,6 +132,8 @@ be found with `?message_template=` whatever their values.
 | `sender_ip`  | string | Exact match                                |
 | `date_from`  | string | ISO 8601 timestamp (inclusive)             |
 | `date_to`    | string | ISO 8601 timestamp (inclusive)             |
+| `range`      | string | Relative range ending now, replaces `date_from`/`date_to`: `<n>m`, `<n>h`, `<n>d`, `<n>w` (e.g. `15m`, `60d`, `90d`, `365d`), `week` (since Sunday 00:00), `month` (since the 1st, 00:00) or `now` (only new entries) |
+| `tz`         | string | IANA time zone for `range=week`/`month` (default UTC) |
 | `search`     | string | Substring match on `message`               |
 | `message_template` | string | Exact match on the message template  |
 | `context[<path>]`     | string | `context` property equals value (see below) |

@@ -917,6 +917,24 @@ components:
       description: Return entries at or before this timestamp (ISO 8601, inclusive).
       example: "2025-01-31T23:59:59Z"
 
+    Range:
+      name: range
+      in: query
+      schema: { type: string, example: 7d }
+      description: |
+        Relative range ending now; when given it replaces `date_from` and `date_to`.
+        - `<n>m`, `<n>h`, `<n>d`, `<n>w`: rolling window, e.g. `15m`, `4h`, `30d`, `60d`, `90d`, `365d`
+        - `week`: this week, from 00:00 of the most recent Sunday
+        - `month`: this month, from 00:00 of the 1st
+        - `now`: only entries logged from now on
+        Unknown values return 400.
+
+    Tz:
+      name: tz
+      in: query
+      schema: { type: string, example: Europe/Dublin }
+      description: IANA time zone in which `range=week` and `range=month` start at midnight. Defaults to UTC.
+
     Search:
       name: search
       in: query
@@ -1289,6 +1307,8 @@ paths:
         - $ref: '#/components/parameters/SenderIp'
         - $ref: '#/components/parameters/DateFrom'
         - $ref: '#/components/parameters/DateTo'
+        - $ref: '#/components/parameters/Range'
+        - $ref: '#/components/parameters/Tz'
         - $ref: '#/components/parameters/Search'
         - $ref: '#/components/parameters/MessageTemplate'
         - $ref: '#/components/parameters/Context'
