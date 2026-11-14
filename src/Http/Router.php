@@ -6,6 +6,7 @@ namespace LogService\Http;
 
 use LogService\Auth\CacheFlushableInterface;
 use LogService\Auth\WriteAuthInterface;
+use LogService\Demo\DemoTraffic;
 use LogService\Ingest\IngestBuffer;
 use LogService\Ingest\IngestConfig;
 use LogService\Logging\SelfLogConfig;
@@ -49,6 +50,10 @@ use React\Promise\PromiseInterface;
  */
 final class Router
 {
+    private const DEMO_MAX_COUNT          = 50;
+    private const DEMO_MAX_BACKFILL_HOURS = 6;
+    private const DEMO_BACKFILL_PER_HOUR  = 40;
+
     private const VOLUME_DEFAULT_DAYS = 90;
     private const VOLUME_MAX_DAYS     = 3650;
 
@@ -70,6 +75,8 @@ final class Router
         private readonly string                              $ingestDbDriver    = IngestConfig::DRIVER_PDO,
         /** Whether the server stores its own messages under the reserved app_key "logstream-server". */
         private readonly bool                                $selfLogging       = false,
+        /** DEMO_MODE: serves /demo and /api/demo/* (fake traffic). 404 otherwise. */
+        private readonly bool                                $demoMode          = false,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -103,6 +110,23 @@ final class Router
 
         if ($method === 'GET' && $path === '/openapi.yaml') {
             return $this->serveTemplate(__DIR__ . '/../../public/openapi.yaml', 'application/yaml');
+        }
+
+        // ── Demo (DEMO_MODE only; otherwise these paths fall through to 404) ──
+
+        if ($this->demoMode) {
+            if ($method === 'GET' && $path === '/demo') {
+                return $this->serveTemplate(__DIR__ . '/../../public/demo.html', 'text/html');
+            }
+            if ($method === 'GET' && $path === '/api/demo/scenarios') {
+                return $this->json(['scenarios' => DemoTraffic::SCENARIOS, 'limits' => [
+                    'max_count'          => self::DEMO_MAX_COUNT,
+                    'max_backfill_hours' => self::DEMO_MAX_BACKFILL_HOURS,
+                ]], 200, $cors);
+            }
+            if ($method === 'POST' && $path === '/api/demo/run') {
+                return $this->handleDemoRun($request, $cors);
+            }
         }
 
         // ── Retention policy CRUD ─────────────────────────────────────────────
@@ -437,6 +461,8 @@ final class Router
                 'async_ingest'      => $this->ingestBuffer !== null,
                 // The server's own messages are stored as entries of this app_key.
                 'self_logging'      => $this->selfLogging,
+                // GET /demo page and /api/demo/* fake-traffic endpoints.
+                'demo_mode'         => $this->demoMode,
             ],
             'self_logging' => [
                 'enabled' => $this->selfLogging,
@@ -483,6 +509,31 @@ final class Router
             ? $body['logs']
             : [$body];
 
+        [$entries, $errors] = $this->buildEntries(
+            $rawLogs, $isSingleKey, $defaultAppKey, $resolvedAppKey,
+            $topAppId, $topUserAgent, $topBatchId, $senderIp,
+        );
+
+        return $this->persist($entries, $errors, $this->preferredReturn($request), $cors);
+    }
+
+    /**
+     * Turns raw POST /api/logs items into entries. Items that fail validation
+     * become messages in $errors, keyed like the request.
+     *
+     * @param array<int, mixed> $rawLogs
+     * @return array{0: array<int, LogEntry>, 1: list<string>}
+     */
+    private function buildEntries(
+        array   $rawLogs,
+        bool    $isSingleKey,
+        ?string $defaultAppKey,
+        ?string $resolvedAppKey,
+        string  $topAppId,
+        ?string $topUserAgent,
+        ?string $topBatchId,
+        ?string $senderIp,
+    ): array {
         $entries = [];
         $errors  = [];
 
@@ -524,6 +575,18 @@ final class Router
             }
         }
 
+        return [$entries, $errors];
+    }
+
+    /**
+     * Stores entries synchronously (201) or through the ingest buffer (202).
+     *
+     * @param array<int, LogEntry> $entries
+     * @param list<string>         $errors
+     * @return Response|PromiseInterface<Response>
+     */
+    private function persist(array $entries, array $errors, ?string $prefer, array $cors): Response|PromiseInterface
+    {
         if ($this->ingestBuffer === null) {
             return $this->ingestSynchronously($entries, $errors, $cors);
         }
@@ -532,7 +595,59 @@ final class Router
             return $this->json(['saved' => 0, 'entries' => [], 'errors' => $errors ?: null], 400, $cors);
         }
 
-        return $this->ingestBuffered($entries, $errors, $this->preferredReturn($request), $cors);
+        return $this->ingestBuffered($entries, $errors, $prefer, $cors);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────────
+    // Demo
+    // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * POST /api/demo/run — {"scenario": "checkout", "count": 5} runs a scenario
+     * `count` times, ending now; {"backfill_hours": 2} writes random history
+     * over the last hours instead. No key: the demo's keys are public anyway,
+     * and the limits keep a single call small.
+     *
+     * @return Response|PromiseInterface<Response>
+     */
+    private function handleDemoRun(ServerRequestInterface $request, array $cors): Response|PromiseInterface
+    {
+        $raw  = (string) $request->getBody();
+        $body = $raw === '' ? [] : json_decode($raw, true);
+        if (!is_array($body)) {
+            return $this->json(['error' => 'Invalid JSON body'], 400, $cors);
+        }
+
+        $backfill = $body['backfill_hours'] ?? null;
+        if ($backfill !== null) {
+            if (!is_numeric($backfill) || $backfill <= 0 || $backfill > self::DEMO_MAX_BACKFILL_HOURS) {
+                return $this->json(['error' => 'backfill_hours must be more than 0 and at most ' . self::DEMO_MAX_BACKFILL_HOURS], 422, $cors);
+            }
+            $rawLogs  = DemoTraffic::backfill((float) $backfill, self::DEMO_BACKFILL_PER_HOUR);
+            $scenario = 'backfill';
+        } else {
+            $scenario = (string) ($body['scenario'] ?? 'random');
+            $count    = $body['count'] ?? 1;
+            if (!DemoTraffic::isScenario($scenario)) {
+                return $this->json(['error' => "Unknown scenario '{$scenario}'", 'scenarios' => array_keys(DemoTraffic::SCENARIOS)], 422, $cors);
+            }
+            if (!is_int($count) || $count < 1 || $count > self::DEMO_MAX_COUNT) {
+                return $this->json(['error' => 'count must be an integer from 1 to ' . self::DEMO_MAX_COUNT], 422, $cors);
+            }
+            // Spread repeated runs over the last few seconds so they don't all share one instant.
+            $rawLogs = [];
+            $now     = microtime(true);
+            for ($i = $count - 1; $i >= 0; $i--) {
+                array_push($rawLogs, ...DemoTraffic::run($scenario, $now - $i * mt_rand(200, 1500) / 1000));
+            }
+        }
+
+        [$entries, $errors] = $this->buildEntries(
+            $rawLogs, true, 'demo', null, 'demo', 'logstream-demo-page/1.0', null,
+            $this->ipResolver->resolve($request),
+        );
+
+        return $this->persist($entries, $errors, null, $cors);
     }
 
     /**

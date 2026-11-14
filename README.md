@@ -28,6 +28,11 @@ the `UI_SECRET`, so just click **Validate and Connect**. To set it up by hand in
 <https://guilherme.stracini.com.br/logstream-ui/> and, in **Settings**, use `https://logstream-demo.onrender.com`
 as the API URL, `wss://logstream-demo.onrender.com/ws` as the WebSocket URL and the `UI_SECRET` above.
 
+The demo fills itself with fake traffic from *ShopFast*, a made-up shop of six services, every time
+it starts, so the UI has events, traces and every log level to explore right away. To send more, open
+**<https://logstream-demo.onrender.com/demo>** and pick a scenario (a checkout, a declined card, a
+gateway timeout…). Both only exist with `DEMO_MODE=true`; see [demo data](docs/deploy-render.md#demo-data).
+
 > ⚠️ **Demo only.** The service spins down after 15 minutes without traffic, and the first request after
 > that takes about a minute to wake it. Storage is not persistent: logs are lost on every redeploy, restart
 > or spin-down, and the demo retention deletes entries older than 1 day. The keys are public, and the `UI_SECRET` is not read-only: it

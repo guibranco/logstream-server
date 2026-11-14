@@ -43,8 +43,10 @@ use Ratchet\Server\IoServer;
 use Ratchet\WebSocket\WsServer;
 use React\EventLoop\Loop;
 use React\Http\HttpServer;
+use React\Http\Middleware\LimitConcurrentRequestsMiddleware;
 use React\Http\Middleware\RequestBodyBufferMiddleware;
 use React\Http\Middleware\RequestBodyParserMiddleware;
+use React\Http\Middleware\StreamingRequestMiddleware;
 use React\Socket\SocketServer;
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
@@ -59,6 +61,8 @@ $apiSecret   = $_ENV['API_SECRET']   ?? '';
 $uiSecret    = $_ENV['UI_SECRET']    ?? '';
 $appVersion  = $_ENV['APP_VERSION']  ?? 'dev';
 $ipResolver  = ClientIpResolver::fromString($_ENV['TRUSTED_PROXIES'] ?? '');
+// DEMO_MODE=true: serve the /demo page and /api/demo/* fake-traffic endpoints.
+$demoMode    = in_array(strtolower(trim((string) ($_ENV['DEMO_MODE'] ?? ''))), ['1', 'true', 'yes', 'on'], true);
 
 try {
     $ingestConfig  = IngestConfig::fromEnv($_ENV);
@@ -237,6 +241,10 @@ if ($selfLogConfig->enabled) {
     $logger->info('selflog', 'Disabled (SELF_LOG_ENABLED=false)');
 }
 
+if ($demoMode) {
+    $logger->warning('demo', 'DEMO_MODE is on: /demo and /api/demo/run accept fake traffic without a key');
+}
+
 $wsSocket = new SocketServer("0.0.0.0:{$wsPort}", [], $loop);
 $wsServer = new IoServer(
     new RatchetHttpServer(new WsServer($hub)),
@@ -263,9 +271,16 @@ $router = new Router(
     ingestWaitSeconds: $ingestConfig->waitTimeoutMs / 1000,
     ingestDbDriver:   $ingestConfig->dbDriver,
     selfLogging:      $selfLogConfig->enabled,
+    demoMode:         $demoMode,
 );
 
+// StreamingRequestMiddleware must come first: without it HttpServer prepends its
+// own body buffer capped at 64 KiB, which silently empties any larger body
+// before the 4 MiB buffer below ever runs (big batches → "Invalid JSON body").
+// With streaming on, HttpServer adds no concurrency limit either, so set one.
 $httpServer = new HttpServer(
+    new StreamingRequestMiddleware(),
+    new LimitConcurrentRequestsMiddleware(100),
     new RequestBodyBufferMiddleware(4 * 1024 * 1024),
     new RequestBodyParserMiddleware(),
     function ($request) use ($router) {

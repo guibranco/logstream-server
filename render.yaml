@@ -25,6 +25,10 @@ services:
         value: /app/storage/logs
       - key: RETENTION_CONFIG
         value: /app/render/retention.json
+      # Demo mode: refill with fake "ShopFast" traffic on every start
+      # (bin/demo-seed.php) and serve the /demo page to trigger more
+      - key: DEMO_MODE
+        value: "true"
       - key: TRUSTED_PROXIES
         value: 127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
       # Store the server's own messages as the app "logstream-server" (false to turn off)
