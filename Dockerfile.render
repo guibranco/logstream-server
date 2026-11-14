@@ -1,0 +1,53 @@
+FROM php:8.5.12-cli
+
+# Single-port image for PaaS hosts that route one public port (Render, Railway,
+# Azure Container Apps…). Caddy listens on $PORT and splits the traffic:
+#   WebSocket upgrades  →  Ratchet  on 127.0.0.1:$WS_PORT   (default 8080)
+#   everything else     →  HTTP API on 127.0.0.1:$HTTP_PORT (default 8081)
+# The PHP server itself is unchanged. See docs/deploy-render.md.
+
+# ── System dependencies ────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        unzip \
+        git \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── PHP extensions ─────────────────────────────────────────────────────────────
+# sockets  – required by Ratchet / ReactPHP
+# pcntl    – graceful signal handling
+# pdo_mysql – MariaDB storage backend
+RUN docker-php-ext-install sockets pcntl pdo_mysql
+
+# ── Composer + Caddy ───────────────────────────────────────────────────────────
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY --from=caddy:2.10.2 /usr/bin/caddy /usr/bin/caddy
+
+# ── Application ────────────────────────────────────────────────────────────────
+WORKDIR /app
+COPY . .
+
+RUN composer install \
+        --no-dev \
+        --no-interaction \
+        --optimize-autoloader \
+        --no-progress
+
+COPY render/Caddyfile /etc/caddy/Caddyfile
+RUN chmod +x render/entrypoint.sh
+
+# ── Runtime defaults (override in the host's environment settings) ────────────
+ENV PORT=10000 \
+    HTTP_PORT=8081 \
+    WS_PORT=8080 \
+    STORAGE_TYPE=file \
+    LOG_PATH=/app/storage/logs \
+    RETENTION_CONFIG=/app/render/retention.json \
+    TRUSTED_PROXIES=127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+
+EXPOSE 10000
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=5 \
+    CMD curl -fsS "http://localhost:${PORT}/api/health" || exit 1
+
+CMD ["render/entrypoint.sh"]
