@@ -33,6 +33,25 @@ logstream-server receives log messages from your applications over HTTP and stre
 
 ---
 
+## Live demo
+
+A public demo runs on Render's free plan, filled with fake traffic from *ShopFast*, a made-up shop of six
+services:
+
+| | |
+|---|---|
+| **Server** | <https://logstream-demo.onrender.com> (API docs at the root) |
+| **Demo traffic** | <https://logstream-demo.onrender.com/demo>: run scenarios (a checkout, a declined card, a gateway timeout…), backfill history or keep traffic flowing |
+| **UI** | [Open the demo, already connected](https://guilherme.stracini.com.br/logstream-ui/#server=https%3A%2F%2Flogstream-demo.onrender.com&secret=lsu_Cj4qmrHvWkH3BfMyUn4HELyBsldiprEGZfB0VAOR2S0) |
+
+![The /demo page: scenario buttons, backfill and continuous mode, and the activity list](https://raw.githubusercontent.com/guibranco/logstream-server/main/docs/assets/images/demo-traffic.png)
+
+The service sleeps after 15 minutes without traffic (the first request takes about a minute to wake it), and
+its logs are wiped on every spin-down, then refilled on start. The keys are public: don't send real data.
+The demo page and its endpoints only exist with `DEMO_MODE=true`; see [Render: demo data](./deploy-render#demo-data).
+
+---
+
 ## Features
 
 - **Real-time streaming** — every ingested log is immediately broadcast to all connected UI clients via WebSocket

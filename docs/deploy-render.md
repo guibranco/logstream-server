@@ -145,6 +145,8 @@ to 50 times (a checkout, a declined card, a gateway timeout, an exhausted DB poo
 6 hours of history, or keep a random scenario going every few seconds while the page is open. It
 links to the UI with the server pre-filled.
 
+![The /demo page: scenario buttons, backfill and continuous mode, and the activity list](https://raw.githubusercontent.com/guibranco/logstream-server/main/docs/assets/images/demo-traffic.png)
+
 The page calls two endpoints that exist only in demo mode, and take no key because the demo's keys
 are public anyway:
 
