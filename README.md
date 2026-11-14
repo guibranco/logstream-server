@@ -12,7 +12,7 @@ A public demo runs on Render's free plan, with file storage:
 | **Server** | <https://logstream-demo.onrender.com> (API docs at the root, health at `/api/health`) |
 | **UI** | [Open the demo, already connected](https://guilherme.stracini.com.br/logstream-ui/#server=https%3A%2F%2Flogstream-demo.onrender.com&secret=lsu_Cj4qmrHvWkH3BfMyUn4HELyBsldiprEGZfB0VAOR2S0) |
 | **`API_SECRET`** (write) | `lsa_fFWu1hWJ19kr_1g9maLswqk4tNCh-24qhv8s2eSMbVs` |
-| **`UI_SECRET`** (read) | `lsu_Cj4qmrHvWkH3BfMyUn4HELyBsldiprEGZfB0VAOR2S0` |
+| **`UI_SECRET`** (UI key: read + admin) | `lsu_Cj4qmrHvWkH3BfMyUn4HELyBsldiprEGZfB0VAOR2S0` |
 
 Send a log entry:
 
@@ -30,8 +30,8 @@ as the API URL, `wss://logstream-demo.onrender.com/ws` as the WebSocket URL and 
 
 > ⚠️ **Demo only.** The service spins down after 15 minutes without traffic, and the first request after
 > that takes about a minute to wake it. Storage is not persistent: logs are lost on every redeploy, restart
-> or spin-down, and the demo retention deletes entries older than 1 day. The keys are public — **don't send
-> real or personal data**. How it is deployed: [`docs/deploy-render.md`](docs/deploy-render.md).
+> or spin-down, and the demo retention deletes entries older than 1 day. The keys are public, and the `UI_SECRET` is not read-only: it
+> also manages retention, so anyone can edit the demo's policies or delete its logs — **don't send real or personal data**. How it is deployed: [`docs/deploy-render.md`](docs/deploy-render.md).
 
 ---
 
