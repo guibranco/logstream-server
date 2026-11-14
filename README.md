@@ -10,6 +10,7 @@ A public demo runs on Render's free plan, with file storage:
 | | |
 |---|---|
 | **Server** | <https://logstream-demo.onrender.com> (API docs at the root, health at `/api/health`) |
+| **Demo traffic** | <https://logstream-demo.onrender.com/demo>: run fake scenarios, backfill history |
 | **UI** | [Open the demo, already connected](https://guilherme.stracini.com.br/logstream-ui/#server=https%3A%2F%2Flogstream-demo.onrender.com&secret=lsu_Cj4qmrHvWkH3BfMyUn4HELyBsldiprEGZfB0VAOR2S0) |
 | **`API_SECRET`** (write) | `lsa_fFWu1hWJ19kr_1g9maLswqk4tNCh-24qhv8s2eSMbVs` |
 | **`UI_SECRET`** (UI key: read + admin) | `lsu_Cj4qmrHvWkH3BfMyUn4HELyBsldiprEGZfB0VAOR2S0` |
@@ -32,6 +33,8 @@ The demo fills itself with fake traffic from *ShopFast*, a made-up shop of six s
 it starts, so the UI has events, traces and every log level to explore right away. To send more, open
 **<https://logstream-demo.onrender.com/demo>** and pick a scenario (a checkout, a declined card, a
 gateway timeout…). Both only exist with `DEMO_MODE=true`; see [demo data](docs/deploy-render.md#demo-data).
+
+![The /demo page: scenario buttons, backfill and continuous mode, and the activity list](docs/assets/images/demo-traffic.png)
 
 > ⚠️ **Demo only.** The service spins down after 15 minutes without traffic, and the first request after
 > that takes about a minute to wake it. Storage is not persistent: logs are lost on every redeploy, restart
