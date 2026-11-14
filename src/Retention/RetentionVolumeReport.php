@@ -35,6 +35,8 @@ final class RetentionVolumeReport
      * @param array<string, int>                  $future   Totals for entries timestamped after today.
      * @param array<int, array<string, mixed>>    $policies Per-policy summary.
      * @param array<string, int>                  $totals   Totals over every stored entry.
+     * @param array<string, mixed>|null           $storage  On-disk table size split into data and indexes
+     *                                                      (database storage only), or null.
      */
     private function __construct(
         public readonly \DateTimeImmutable $generatedAt,
@@ -45,11 +47,13 @@ final class RetentionVolumeReport
         public readonly array              $future,
         public readonly array              $policies,
         public readonly array              $totals,
+        public readonly ?array             $storage = null,
     ) {}
 
     /**
      * @param RetentionPolicy[]                   $policies
      * @param array<string, array<string, mixed>> $daily    Per-day totals keyed by 'Y-m-d'.
+     * @param array<string, mixed>|null           $storage  On-disk table size (data vs. indexes), when known.
      */
     public static function fromDailyTotals(
         array               $policies,
@@ -57,6 +61,7 @@ final class RetentionVolumeReport
         int                 $days,
         string              $sizeBasis,
         ?\DateTimeImmutable $today = null,
+        ?array              $storage = null,
     ): self {
         $today ??= new \DateTimeImmutable('today');
         $today   = $today->setTime(0, 0);
@@ -103,6 +108,7 @@ final class RetentionVolumeReport
             future:      $future,
             policies:    array_values($perPolicy),
             totals:      $totals,
+            storage:     $storage,
         );
     }
 
@@ -117,6 +123,7 @@ final class RetentionVolumeReport
             'future'       => $this->future,
             'policies'     => $this->policies,
             'totals'       => $this->totals,
+            'storage'      => $this->storage,
         ];
     }
 

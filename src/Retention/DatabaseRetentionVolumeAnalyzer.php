@@ -16,11 +16,20 @@ use LogService\Database\Connection;
  * statements do not allow a named parameter to appear twice.
  *
  * Bytes are an approximation: the length of message, message_template and
- * context, not the on-disk row size.
+ * context, not the on-disk row size. The real on-disk footprint of the table,
+ * split into data and indexes, comes from information_schema.TABLES (see
+ * tableStorage()); it is a table-wide figure, not a per-day one.
  */
 final class DatabaseRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerInterface
 {
     private const BYTES_EXPR = '(COALESCE(LENGTH(message), 0) + COALESCE(LENGTH(message_template), 0) + COALESCE(LENGTH(context), 0))';
+
+    private const TABLE = 'log_entries';
+
+    private const STORAGE_SQL = 'SELECT DATA_LENGTH AS data_length, INDEX_LENGTH AS index_length,'
+        . ' DATA_FREE AS data_free, TABLE_ROWS AS table_rows, ENGINE AS engine'
+        . ' FROM information_schema.TABLES'
+        . ' WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table';
 
     private const FLAG_OPEN = 'CASE WHEN ';
     private const FLAG_CLOSE = ' THEN 1 ELSE 0 END';
@@ -88,7 +97,51 @@ final class DatabaseRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerIn
             $daily,
             $days,
             RetentionVolumeReport::SIZE_BASIS_PAYLOAD,
+            storage: $this->tableStorage(),
         );
+    }
+
+    /**
+     * On-disk size of log_entries as MySQL/MariaDB reports it: data (rows,
+     * including the clustered primary key for InnoDB) and indexes (every
+     * secondary and full-text index), plus allocated-but-free space.
+     *
+     * InnoDB keeps these as statistics, refreshed by ANALYZE TABLE and in the
+     * background, so they are estimates. Returns null when the server does
+     * not expose information_schema (e.g. SQLite in tests) or the query fails;
+     * the chart then simply has no breakdown.
+     *
+     * @return array{table: string, engine: ?string, data_bytes: int, index_bytes: int, free_bytes: int, total_bytes: int, rows_estimate: int}|null
+     */
+    private function tableStorage(): ?array
+    {
+        try {
+            $stmt = $this->db->pdo()->prepare(self::STORAGE_SQL);
+            $stmt->execute([':table' => self::TABLE]);
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        } catch (\PDOException $e) {
+            // Logged so a permissions or query problem in MariaDB mode can be told
+            // apart from the expected null in file mode; the report still loads.
+            error_log('[Retention] Could not read table size from information_schema: ' . $e->getMessage());
+            return null;
+        }
+
+        if (!is_array($row)) {
+            return null;
+        }
+
+        $data  = (int) ($row['data_length'] ?? 0);
+        $index = (int) ($row['index_length'] ?? 0);
+
+        return [
+            'table'         => self::TABLE,
+            'engine'        => isset($row['engine']) ? (string) $row['engine'] : null,
+            'data_bytes'    => $data,
+            'index_bytes'   => $index,
+            'free_bytes'    => (int) ($row['data_free'] ?? 0),
+            'total_bytes'   => $data + $index,
+            'rows_estimate' => (int) ($row['table_rows'] ?? 0),
+        ];
     }
 
     /** 1 when the condition holds for the row, else 0. */
