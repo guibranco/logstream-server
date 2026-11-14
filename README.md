@@ -302,7 +302,10 @@ template and context in MariaDB mode. In MariaDB mode the report also has a
 indexes, read from `information_schema.TABLES` (`DATA_LENGTH`, `INDEX_LENGTH`,
 `DATA_FREE`, `TABLE_ROWS`). Those are InnoDB statistics for the whole table,
 so they are estimates and not split by day; run `ANALYZE TABLE log_entries`
-to refresh them. It is `null` in file mode. The report reads every stored entry, so
+to refresh them. `free_bytes` (`DATA_FREE`) is kept out of `total_bytes`: with
+a shared tablespace it is the whole tablespace's free space, not this table's.
+It is `null` in file mode, or when `information_schema` cannot be read (logged
+as `[Retention] Could not read table size…`). The report reads every stored entry, so
 the server caches it for up to 5 minutes; editing a policy, or a run that
 deletes entries, refreshes it.
 

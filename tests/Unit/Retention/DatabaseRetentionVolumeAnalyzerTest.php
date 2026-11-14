@@ -133,9 +133,10 @@ final class DatabaseRetentionVolumeAnalyzerTest extends TestCase
     public function it_splits_table_storage_into_data_and_indexes(): void
     {
         $this->fakeInformationSchema([
-            ['logs', 'log_entries', 'InnoDB', 16384000, 8192000, 4194304, 1234],
+            // Non-matching rows first, so a lookup that ignores its filters fails
             ['other', 'log_entries', 'InnoDB', 1, 1, 1, 1],
             ['logs', 'clients', 'InnoDB', 2, 2, 2, 2],
+            ['logs', 'log_entries', 'InnoDB', 16384000, 8192000, 4194304, 1234],
         ]);
 
         $report = $this->analyzer->analyze([], 7);

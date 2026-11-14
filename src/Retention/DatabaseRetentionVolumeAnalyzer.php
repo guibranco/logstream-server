@@ -119,7 +119,10 @@ final class DatabaseRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerIn
             $stmt = $this->db->pdo()->prepare(self::STORAGE_SQL);
             $stmt->execute([':table' => self::TABLE]);
             $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-        } catch (\PDOException) {
+        } catch (\PDOException $e) {
+            // Logged so a permissions or query problem in MariaDB mode can be told
+            // apart from the expected null in file mode; the report still loads.
+            error_log('[Retention] Could not read table size from information_schema: ' . $e->getMessage());
             return null;
         }
 

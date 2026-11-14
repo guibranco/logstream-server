@@ -576,9 +576,9 @@ components:
         totals:
           $ref: '#/components/schemas/RetentionVolumeTotals'
         storage:
-          allOf:
+          oneOf:
             - $ref: '#/components/schemas/RetentionVolumeStorage'
-          nullable: true
+            - type: 'null'
           description: >
             On-disk size of the log table, split into data and indexes. Only in
             MariaDB/MySQL storage; null in file storage or when
@@ -596,8 +596,7 @@ components:
           type: string
           example: log_entries
         engine:
-          type: string
-          nullable: true
+          type: [string, 'null']
           example: InnoDB
         data_bytes:
           type: integer
@@ -607,7 +606,12 @@ components:
           description: "`INDEX_LENGTH` — every secondary and full-text index."
         free_bytes:
           type: integer
-          description: "`DATA_FREE` — allocated but unused space (reclaimable by `OPTIMIZE TABLE`)."
+          description: >
+            `DATA_FREE` — allocated but unused space. With a file-per-table
+            tablespace it belongs to this table (and `OPTIMIZE TABLE` can return
+            it to the OS); with a shared tablespace it is the free space of the
+            whole tablespace, not specific to this table and not necessarily
+            reclaimable by optimizing it. Not included in `total_bytes`.
         total_bytes:
           type: integer
           description: data_bytes + index_bytes.
