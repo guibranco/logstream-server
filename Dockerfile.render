@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unzip \
         git \
         curl \
+        libcap2-bin \
     && rm -rf /var/lib/apt/lists/*
 
 # ── PHP extensions ─────────────────────────────────────────────────────────────
@@ -22,6 +23,11 @@ RUN docker-php-ext-install sockets pcntl pdo_mysql
 # ── Composer + Caddy ───────────────────────────────────────────────────────────
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 COPY --from=caddy:2.10.2 /usr/bin/caddy /usr/bin/caddy
+
+# The official image grants Caddy cap_net_bind_service as a file capability.
+# Hosts that drop it from the bounding set (Render) refuse to exec the binary
+# ("Operation not permitted"), and $PORT is unprivileged anyway, so remove it.
+RUN setcap -r /usr/bin/caddy && caddy version
 
 # ── Application ────────────────────────────────────────────────────────────────
 WORKDIR /app
