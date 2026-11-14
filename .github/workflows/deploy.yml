@@ -247,6 +247,11 @@ jobs:
           # Set the repository variables INGEST_MODE=sync or DB_DRIVER=pdo to roll back.
           INGEST_MODE: ${{ vars.INGEST_MODE || 'buffered' }}
           DB_DRIVER: ${{ vars.DB_DRIVER || 'async' }}
+          # The server's own messages are stored as the app "logstream-server".
+          # Set the repository variable SELF_LOG_ENABLED=false to turn that off,
+          # SELF_LOG_LEVEL to store less (e.g. warning).
+          SELF_LOG_ENABLED: ${{ vars.SELF_LOG_ENABLED || 'true' }}
+          SELF_LOG_LEVEL: ${{ vars.SELF_LOG_LEVEL || 'info' }}
         run: |
           umask 077
           cat > .env.deploy <<EOF
@@ -260,6 +265,8 @@ jobs:
           STORAGE_TYPE=mariadb
           INGEST_MODE=$INGEST_MODE
           DB_DRIVER=$DB_DRIVER
+          SELF_LOG_ENABLED=$SELF_LOG_ENABLED
+          SELF_LOG_LEVEL=$SELF_LOG_LEVEL
           LOG_PATH=./storage/logs
           DB_HOST=$DB_HOST
           DB_PORT=3306

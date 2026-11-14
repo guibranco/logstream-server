@@ -151,6 +151,31 @@ final class IngestBufferTest extends TestCase
     // ── Failures ──────────────────────────────────────────────────────────────
 
     #[Test]
+    public function a_failed_flush_is_reported_to_the_log_callable(): void
+    {
+        $logged = [];
+        $buffer = new IngestBuffer(
+            writer:               $this->writer,
+            batchSize:            3,
+            capacity:             10,
+            flushIntervalSeconds: 0.01,
+            loop:                 $this->loop,
+            clock:                fn() => $this->now,
+            log:                  function (string $level, string $message, array $context = []) use (&$logged): void {
+                $logged[] = [$level, $message, $context];
+            },
+        );
+        $this->writer->down = true;
+        $buffer->enqueue($this->entries('A'));
+        $buffer->flush();
+
+        self::assertCount(1, $logged);
+        self::assertSame('warning', $logged[0][0]);
+        self::assertStringStartsWith('Flush of 1 entries failed (1 in a row), retrying in 0.5s', $logged[0][1]);
+        self::assertSame(1, $logged[0][2]['consecutive_failures']);
+    }
+
+    #[Test]
     public function a_failed_batch_is_requeued_in_order_and_retried_after_a_backoff(): void
     {
         $buffer = $this->buffer();
