@@ -309,6 +309,12 @@ as `[Retention] Could not read table size…`). The report reads every stored en
 the server caches it for up to 5 minutes; editing a policy, or a run that
 deletes entries, refreshes it.
 
+In [logstream-ui](https://github.com/guibranco/logstream-ui), the **Size** view
+uses `storage` to stack each day's estimated data and indexes, Seq-style
+(data by the day's share of payload bytes, indexes by its share of entries):
+
+![Storage by age in Size mode: per-day data and index size stacked](https://raw.githubusercontent.com/guibranco/logstream-ui/main/docs/screenshots/desktop-retention-size.png)
+
 ### Testing
 
 ```bash
