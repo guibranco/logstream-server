@@ -1,0 +1,29 @@
+# Render Blueprint for a free LogStream demo (file storage, single public port).
+# Setup steps: docs/deploy-render.md
+
+services:
+  - type: web
+    name: logstream-demo
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./Dockerfile.render
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeployTrigger: checksPass
+    envVars:
+      # Write key: Authorization: Bearer <API_SECRET> on POST /api/logs
+      - key: API_SECRET
+        sync: false
+      # Read key: UI and WebSocket (?token=<UI_SECRET>)
+      - key: UI_SECRET
+        sync: false
+      - key: STORAGE_TYPE
+        value: file
+      - key: LOG_PATH
+        value: /app/storage/logs
+      - key: RETENTION_CONFIG
+        value: /app/render/retention.json
+      - key: TRUSTED_PROXIES
+        value: 127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16

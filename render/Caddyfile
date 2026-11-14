@@ -1,0 +1,26 @@
+# render/Caddyfile
+# Puts the HTTP API and the WebSocket hub behind the single port ($PORT) that
+# PaaS hosts expose. TLS is terminated by the host's edge, so Caddy speaks plain
+# HTTP inside the container.
+
+{
+	admin off
+	auto_https off
+	persist_config off
+
+	servers {
+		# The host's edge proxy connects from a private address and sends
+		# X-Forwarded-For; keep that header so LogStream records the real
+		# sender_ip (TRUSTED_PROXIES on the PHP side covers these ranges).
+		trusted_proxies static private_ranges
+	}
+}
+
+:{$PORT:10000} {
+	# Any WebSocket handshake goes to Ratchet, whatever the path, so both
+	# wss://host/ws?token=… and wss://host/?token=… work.
+	@websocket header_regexp Upgrade (?i)^websocket$
+	reverse_proxy @websocket 127.0.0.1:{$WS_PORT:8080}
+
+	reverse_proxy 127.0.0.1:{$HTTP_PORT:8081}
+}

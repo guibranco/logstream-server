@@ -185,3 +185,4 @@ Choose the guide that matches your environment:
 - [**Ubuntu**](./deploy-ubuntu) — PHP 8.3 + systemd + Nginx + Certbot
 - [**Windows**](./deploy-windows) — PHP 8.3 + NSSM Windows Service + optional Nginx
 - [**Docker**](./deploy-docker) — Docker Compose + Nginx container + Certbot container
+- [**Render (free demo)**](./deploy-render) — single-port image with Caddy, file storage, Render Blueprint
