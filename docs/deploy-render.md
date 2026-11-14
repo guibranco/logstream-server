@@ -111,6 +111,50 @@ the `UI_SECRET`; the UI adds it.
 | `TRUSTED_PROXIES` | loopback + private ranges | Records the real client in `sender_ip` |
 | `APP_VERSION` | first 7 chars of `RENDER_GIT_COMMIT` | |
 | `SELF_LOG_ENABLED` | `true` | Stores the server's own messages as the app `logstream-server`; `false` turns it off |
+| `DEMO_MODE` | `false` (`true` in `render.yaml`) | Fills the demo with fake traffic on every start and serves the `/demo` page, see below |
+| `DEMO_SEED_BACKFILL_HOURS` | `6` | History written at start-up; keep it under the 1-day demo retention |
+| `DEMO_SEED_INTERVAL` | `5` | Seconds between live scenarios while the instance is awake |
+
+---
+
+## Demo data
+
+Storage is wiped on every spin-down, so with `DEMO_MODE=true` the entrypoint starts
+[`bin/demo-seed.php`](../bin/demo-seed.php) next to the server. It simulates *ShopFast*, a
+made-up shop of six backend services (`storefront-api`, `auth-service`, `checkout-api`,
+`inventory-service`, `payment-worker`, `notification-worker`): it backfills the last few hours,
+then sends a new scenario every few seconds while the instance is up. Each scenario (a sign-in,
+a search, a checkout through inventory, payment and e-mail, a background job) shares one
+`trace_id` across services and uses message templates, with the odd timeout, declined card or
+exhausted DB pool so every level shows up.
+
+The seeder posts to the internal `HTTP_PORT`, never through Render's proxy, so it does not keep
+the instance awake or use extra hours. The same script works against any LogStream server:
+
+```bash
+php bin/demo-seed.php --url=http://localhost:8081 --secret=lsa_local          # backfill + live
+php bin/demo-seed.php --url=https://logstream-demo.onrender.com --secret=lsa_… --no-live
+php bin/demo-seed.php --help
+```
+
+### The `/demo` page
+
+`DEMO_MODE=true` also serves a page at **`/demo`** (for the live demo,
+<https://logstream-demo.onrender.com/demo>) to trigger traffic by hand: run any scenario once or up
+to 50 times (a checkout, a declined card, a gateway timeout, an exhausted DB pool…), backfill up to
+6 hours of history, or keep a random scenario going every few seconds while the page is open. It
+links to the UI with the server pre-filled.
+
+The page calls two endpoints that exist only in demo mode, and take no key because the demo's keys
+are public anyway:
+
+| Endpoint | Body | |
+|----------|------|---|
+| `GET /api/demo/scenarios` | — | Scenario names and descriptions, plus the limits |
+| `POST /api/demo/run` | `{"scenario": "checkout", "count": 5}` or `{"backfill_hours": 2}` | Same responses as `POST /api/logs` |
+
+Without `DEMO_MODE`, `/demo` and `/api/demo/*` answer 404, and `GET /api/info` reports
+`features.demo_mode: false`. Don't turn it on for a server with real data.
 
 ---
 

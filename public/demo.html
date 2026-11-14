@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>logstream-server — Demo traffic</title>
+  <link rel="icon" href="/favicon.ico">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0; background: #0f1117; color: #cbd5e1;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px;
+    }
+    a { color: #60a5fa; }
+    header {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 14px 24px; border-bottom: 1px solid #2a2d3d;
+      background: linear-gradient(135deg, #1a1d27 0%, #12151f 100%);
+    }
+    .logo {
+      width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6); font-size: 14px;
+    }
+    .name { font-size: 15px; font-weight: 600; color: #e2e8f0; }
+    .badge {
+      font-size: 11px; color: #64748b; background: #1e2130;
+      border: 1px solid #2a2d3d; border-radius: 4px; padding: 2px 7px;
+    }
+    .badge.demo { color: #fbbf24; border-color: #78350f; background: #2a1f0a; }
+    header nav { margin-left: auto; display: flex; gap: 4px; }
+    header nav a {
+      color: #64748b; text-decoration: none; font-size: 13px; padding: 6px 10px; border-radius: 6px;
+    }
+    header nav a:hover { color: #94a3b8; background: #1e2130; }
+    main { max-width: 980px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+    section { background: #12151f; border: 1px solid #2a2d3d; border-radius: 10px; padding: 18px 20px; }
+    h1 { margin: 0 0 6px; font-size: 20px; color: #e2e8f0; }
+    h2 { margin: 0 0 12px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #64748b; }
+    p { margin: 0 0 8px; line-height: 1.5; }
+    .muted { color: #64748b; font-size: 13px; }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+    button.scenario {
+      text-align: left; padding: 10px 12px; border-radius: 8px; cursor: pointer;
+      background: #1a1d27; border: 1px solid #2a2d3d; color: #e2e8f0; font: inherit;
+    }
+    button.scenario:hover:not(:disabled) { border-color: #3b82f6; background: #1c2133; }
+    button.scenario strong { display: block; font-size: 13px; font-family: ui-monospace, monospace; }
+    button.scenario span { display: block; font-size: 12px; color: #94a3b8; margin-top: 3px; }
+    button.primary {
+      padding: 8px 14px; border-radius: 6px; border: 0; cursor: pointer; font: inherit; font-weight: 600;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: white;
+    }
+    button:disabled { opacity: .5; cursor: progress; }
+    select, input[type=number] {
+      background: #1a1d27; color: #e2e8f0; border: 1px solid #2a2d3d; border-radius: 6px;
+      padding: 6px 8px; font: inherit;
+    }
+    input[type=number] { width: 70px; }
+    label { display: inline-flex; align-items: center; gap: 6px; }
+    #activity { list-style: none; margin: 0; padding: 0; font-family: ui-monospace, monospace; font-size: 12px; }
+    #activity li { padding: 5px 0; border-bottom: 1px solid #1e2130; display: flex; gap: 10px; }
+    #activity time { color: #64748b; }
+    .ok { color: #4ade80; } .err { color: #f87171; }
+    #activity:empty::before { content: 'Nothing sent yet.'; color: #64748b; }
+  </style>
+</head>
+<body>
+<header>
+  <div class="logo">📡</div>
+  <span class="name">logstream-server</span>
+  <span class="badge">{{APP_VERSION}}</span>
+  <span class="badge demo">DEMO MODE</span>
+  <nav>
+    <a id="ui-link" href="https://guilherme.stracini.com.br/logstream-ui/" target="_blank" rel="noopener">Open the UI ↗</a>
+    <a href="/docs">API docs</a>
+  </nav>
+</header>
+
+<main>
+  <section>
+    <h1>Demo traffic</h1>
+    <p>
+      Sends fake logs from <strong>ShopFast</strong>, a made-up shop of six backend services. Each run is one
+      request flowing through several services under a shared <code>trace_id</code>, so watch the UI's
+      events and traces fill in. Every name, e-mail and order is invented.
+    </p>
+    <p class="muted">
+      This page exists only because the server runs with <code>DEMO_MODE=true</code>. Anyone can use it, and
+      the demo's storage is wiped whenever the instance sleeps.
+    </p>
+  </section>
+
+  <section>
+    <h2>Run a scenario</h2>
+    <div class="row" style="margin-bottom: 12px">
+      <label>Times
+        <select id="count">
+          <option>1</option><option>5</option><option>10</option><option>25</option><option>50</option>
+        </select>
+      </label>
+      <span class="muted">Repeated runs are spread over the last few seconds.</span>
+    </div>
+    <div id="scenarios" class="grid"><span class="muted">Loading scenarios…</span></div>
+  </section>
+
+  <section>
+    <h2>More</h2>
+    <div class="row" style="margin-bottom: 12px">
+      <label>Backfill the last
+        <input id="hours" type="number" min="1" max="6" step="1" value="2"> hours
+      </label>
+      <button id="backfill" class="primary">Backfill history</button>
+    </div>
+    <div class="row">
+      <label><input id="auto" type="checkbox"> Keep sending a random scenario every
+        <select id="every"><option value="2">2</option><option value="5" selected>5</option><option value="10">10</option></select>
+        seconds while this page is open
+      </label>
+    </div>
+  </section>
+
+  <section>
+    <h2>Activity</h2>
+    <ul id="activity"></ul>
+  </section>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const activity = $('activity');
+  let busy = false;
+
+  $('ui-link').href += '#server=' + encodeURIComponent(location.origin);
+
+  function note(text, ok) {
+    const li = document.createElement('li');
+    const time = document.createElement('time');
+    time.textContent = new Date().toLocaleTimeString();
+    const msg = document.createElement('span');
+    msg.className = ok ? 'ok' : 'err';
+    msg.textContent = text;
+    li.append(time, msg);
+    activity.prepend(li);
+    while (activity.children.length > 50) activity.lastChild.remove();
+  }
+
+  function setBusy(value) {
+    busy = value;
+    document.querySelectorAll('button').forEach((b) => { b.disabled = value; });
+  }
+
+  async function run(payload, label) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch('/api/demo/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const n = body.accepted ?? body.saved ?? (body.entries || []).length;
+        note(`${label}: ${n} entries sent`, true);
+      } else {
+        note(`${label}: ${body.error || 'HTTP ' + res.status}`, false);
+      }
+    } catch (e) {
+      note(`${label}: ${e.message}`, false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadScenarios() {
+    const box = $('scenarios');
+    try {
+      const res = await fetch('/api/demo/scenarios');
+      const { scenarios } = await res.json();
+      box.textContent = '';
+      for (const [name, description] of Object.entries(scenarios)) {
+        const btn = document.createElement('button');
+        btn.className = 'scenario';
+        const title = document.createElement('strong');
+        title.textContent = name;
+        const desc = document.createElement('span');
+        desc.textContent = description;
+        btn.append(title, desc);
+        btn.addEventListener('click', () => {
+          const count = parseInt($('count').value, 10);
+          run({ scenario: name, count }, count > 1 ? `${name} × ${count}` : name);
+        });
+        box.append(btn);
+      }
+    } catch (e) {
+      box.textContent = 'Could not load the scenarios: ' + e.message;
+    }
+  }
+
+  $('backfill').addEventListener('click', () => {
+    const hours = parseInt($('hours').value, 10);
+    run({ backfill_hours: hours }, `backfill ${hours} h`);
+  });
+
+  let timer = null;
+  function schedule() {
+    clearInterval(timer);
+    timer = $('auto').checked
+      ? setInterval(() => run({ scenario: 'random', count: 1 }, 'random (auto)'), $('every').value * 1000)
+      : null;
+  }
+  $('auto').addEventListener('change', schedule);
+  $('every').addEventListener('change', schedule);
+
+  loadScenarios();
+</script>
+</body>
+</html>

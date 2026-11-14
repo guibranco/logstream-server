@@ -28,8 +28,22 @@ PHP_PID=$!
 caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
 CADDY_PID=$!
 
+# Demo mode: storage is wiped on every spin-down, so refill it on each start.
+# The seeder talks to the internal port, so its traffic never keeps the
+# service awake. It is not part of `wait -n` below: if it stops, the server
+# carries on.
+SEED_PID=""
+if [[ "${DEMO_MODE:-false}" == "true" ]]; then
+    echo "🌱 DEMO_MODE=true: seeding demo logs"
+    php bin/demo-seed.php \
+        --url="http://127.0.0.1:$HTTP_PORT" \
+        --backfill-hours="${DEMO_SEED_BACKFILL_HOURS:-6}" \
+        --interval="${DEMO_SEED_INTERVAL:-5}" &
+    SEED_PID=$!
+fi
+
 shutdown() {
-    kill -TERM "$PHP_PID" "$CADDY_PID" 2>/dev/null || true
+    kill -TERM "$PHP_PID" "$CADDY_PID" ${SEED_PID:+"$SEED_PID"} 2>/dev/null || true
 }
 trap shutdown TERM INT
 
