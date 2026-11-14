@@ -94,6 +94,11 @@ UI_SECRET=<generate-another-strong-secret>
 STORAGE_TYPE=mariadb   # or "file"
 LOG_PATH=./storage/logs
 
+# Ingest: answer 202 and write in batches (default), or "sync" to write first.
+# DB_DRIVER picks the MariaDB client for those writes: "async" (default) or "pdo".
+INGEST_MODE=buffered
+DB_DRIVER=async
+
 # MariaDB (used when STORAGE_TYPE=mariadb)
 DB_HOST=db
 DB_PORT=3306
@@ -109,6 +114,8 @@ docker compose run --rm --no-deps app php bin/generate-secret.php
 ```
 
 New secrets carry a prefix: `lsa_` for `API_SECRET`, `lsu_` for `UI_SECRET` and `lss_` for application tokens created through `/api/clients`. Set `API_SECRET_PREFIX`, `UI_SECRET_PREFIX` or `APP_TOKEN_PREFIX` to change them (empty disables the prefix). Existing secrets keep working unchanged.
+
+`docker stop` / `docker compose down` send SIGTERM, which makes the server write any buffered entries before exiting (up to `INGEST_SHUTDOWN_TIMEOUT_MS`, 8 s by default, inside Docker's 10 s stop grace period — raise `stop_grace_period` if you raise it). See [Ingest modes](../README.md#ingest-modes).
 
 ---
 

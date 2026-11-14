@@ -243,6 +243,10 @@ jobs:
           # entries record sender_ip=127.0.0.1. Override with the repository
           # variable TRUSTED_PROXIES if the proxy topology changes (e.g. a CDN).
           TRUSTED_PROXIES: ${{ vars.TRUSTED_PROXIES || '127.0.0.1,::1' }}
+          # Buffered ingest (202 + batched writes) over the async MariaDB driver.
+          # Set the repository variables INGEST_MODE=sync or DB_DRIVER=pdo to roll back.
+          INGEST_MODE: ${{ vars.INGEST_MODE || 'buffered' }}
+          DB_DRIVER: ${{ vars.DB_DRIVER || 'async' }}
         run: |
           umask 077
           cat > .env.deploy <<EOF
@@ -254,6 +258,8 @@ jobs:
           TRUSTED_PROXIES=$TRUSTED_PROXIES
           RETENTION_CONFIG=./retention.production.json
           STORAGE_TYPE=mariadb
+          INGEST_MODE=$INGEST_MODE
+          DB_DRIVER=$DB_DRIVER
           LOG_PATH=./storage/logs
           DB_HOST=$DB_HOST
           DB_PORT=3306

@@ -11,6 +11,14 @@ interface StorageInterface
     public function save(LogEntry $entry): void;
 
     /**
+     * Persist several entries at once (used by the buffered ingest path).
+     * Implementations should write them in as few operations as possible.
+     *
+     * @param list<LogEntry> $entries
+     */
+    public function saveMany(array $entries): void;
+
+    /**
      * Search log entries.
      *
      * Supported $filters keys:

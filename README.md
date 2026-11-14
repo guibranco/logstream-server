@@ -107,7 +107,16 @@ be found with `?message_template=` whatever their values.
   `message_template`; both are stored as sent. A `message_template` without a
   `message` is rendered by the server.
 
-**Response (201):**
+**Response — buffered mode (default), 202:**
+```json
+{
+  "accepted": 1,
+  "entries":  [ { "id": "01HZ3XKPQ7V8WBNM0S4DECJRA", "trace_id": "6ba7b810-…" } ],
+  "errors":   null
+}
+```
+
+**Response — `Prefer: return=representation`, or sync mode, 201:**
 ```json
 {
   "saved":   1,
@@ -115,6 +124,8 @@ be found with `?message_template=` whatever their values.
   "errors":  null
 }
 ```
+
+See [Ingest modes](#ingest-modes) for when each is returned.
 
 ---
 
@@ -176,8 +187,16 @@ Fetch a single entry by internal `id` or `trace_id`.
 ### GET /api/health
 
 ```json
-{ "status": "ok", "time": "...", "ws_connections": 2 }
+{
+  "status": "ok", "time": "...", "ws_connections": 2,
+  "ingest": { "mode": "buffered", "db_driver": "async", "writer": "async-mysql",
+              "queued": 0, "in_flight": 0, "persisted_total": 1532,
+              "consecutive_failures": 0, "last_error": null, "...": "..." }
+}
 ```
+
+`ingest` reports the buffer state (see [Ingest modes](#ingest-modes)); in sync
+mode it is just `{ "mode": "sync" }`.
 
 ---
 
@@ -257,6 +276,54 @@ TRUSTED_PROXIES=172.16.0.0/12            # Nginx container on a Docker network
 
 In MariaDB mode, apply `migrations/005_sender_ip.sql` to add the column.
 Entries stored before that keep `sender_ip: null`.
+
+### Ingest modes
+
+`POST /api/logs` can answer before or after the entries are written.
+
+| `INGEST_MODE`        | Response | Writes |
+|----------------------|----------|--------|
+| `buffered` (default) | **202 Accepted** with each entry's `id` and `trace_id` | Queued in memory, written in batches every `INGEST_FLUSH_INTERVAL_MS` (500 ms) or as soon as `INGEST_BATCH_SIZE` (500) entries wait |
+| `sync`               | **201 Created** with the stored entries | One write per entry before responding |
+
+In buffered mode a client that needs to know its entries are stored sends
+[`Prefer: return=representation`](https://www.rfc-editor.org/rfc/rfc7240) and
+gets the same 201 response as sync mode once its batch is written
+(`Preference-Applied: return=representation`). If that takes longer than
+`INGEST_WAIT_TIMEOUT_MS` it gets 202 instead — the entries are still queued.
+`Prefer: return=minimal` is the default and is simply acknowledged.
+
+Validation (auth, JSON, required fields, per-entry errors) always happens
+before responding; only the write is deferred. Entries are broadcast on the
+WebSocket once they are stored, so the live view never shows an entry search
+can't find yet.
+
+**Database driver (`DB_DRIVER`).** With MariaDB storage, buffered entries are
+written with one multi-row `INSERT` per flush, through either:
+
+- `async` (default) — a non-blocking [ReactPHP MySQL](https://github.com/friends-of-reactphp/mysql)
+  connection. The INSERT runs without stalling HTTP or WebSocket traffic.
+- `pdo` — the existing blocking PDO connection.
+
+Searches, client management and retention always use PDO.
+
+**When storage fails.** A failed batch goes back to the front of the queue and
+is retried with backoff (0.5 s doubling to 30 s). After three failures in a row
+the next batch is written entry by entry: if some entries succeed, the ones the
+database rejects are bad data and are dropped (logged, counted in
+`dropped_total`); if none succeed, everything stays queued. When queued
+entries reach `INGEST_BUFFER_CAPACITY` (50 000) new requests get **503** with
+`Retry-After: 1` rather than the server running out of memory.
+
+**Shutdown.** On SIGTERM/SIGINT (`systemctl restart`, `docker stop`) the
+server stops accepting connections, writes what is queued for up to
+`INGEST_SHUTDOWN_TIMEOUT_MS` (8 s, inside systemd's and Docker's 10 s stop
+timeout), then exits. Entries can only be lost if the
+process is killed without that chance (`kill -9`, OOM, host crash) — at most
+about one flush interval's worth.
+
+Watch `GET /api/health` → `ingest` for `queued`, `consecutive_failures` and
+`last_error`. Set `INGEST_MODE=sync` to go back to the original behaviour.
 
 ### Message template storage
 

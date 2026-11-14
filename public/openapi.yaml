@@ -655,6 +655,86 @@ components:
                 True when `GET /api/logs` accepts `app_key[]`, `app_id[]` and
                 `level[]` lists (matching any of the values).
               example: true
+            async_ingest:
+              type: boolean
+              description: |
+                True when `INGEST_MODE=buffered`: `POST /api/logs` answers
+                `202 Accepted` and honours `Prefer: return=representation|minimal`.
+              example: true
+        ingest:
+          $ref: '#/components/schemas/IngestMode'
+
+    IngestMode:
+      type: object
+      required: [mode]
+      properties:
+        mode:
+          type: string
+          enum: [buffered, sync]
+          description: |
+            `buffered` — entries are queued and written in batches (`INGEST_MODE=buffered`, default).
+            `sync` — every entry is written before the response.
+          example: buffered
+        db_driver:
+          type: string
+          nullable: true
+          enum: [async, pdo, null]
+          description: |
+            Client used to write buffered entries to MariaDB (`DB_DRIVER`).
+            `null` for file storage; absent in sync mode.
+          example: async
+
+    IngestStats:
+      allOf:
+        - $ref: '#/components/schemas/IngestMode'
+        - type: object
+          description: Present in buffered mode only.
+          properties:
+            writer:
+              type: string
+              enum: [async-mysql, pdo-mysql, file]
+              example: async-mysql
+            accepting:
+              type: boolean
+              description: False while the server is shutting down.
+            queued:
+              type: integer
+              description: Entries waiting to be written.
+            in_flight:
+              type: integer
+              description: Entries in the batch being written.
+            capacity:
+              type: integer
+              description: Queued + in-flight entries above which requests get 503.
+            batch_size:
+              type: integer
+            flush_interval_ms:
+              type: integer
+            accepted_total:
+              type: integer
+            persisted_total:
+              type: integer
+            rejected_total:
+              type: integer
+              description: Entries refused with 503 because the buffer was full.
+            dropped_total:
+              type: integer
+              description: Entries the storage rejected individually (bad data); see the server log.
+            failed_flushes_total:
+              type: integer
+            consecutive_failures:
+              type: integer
+              description: Non-zero while the storage is failing; batches are retried with backoff.
+            last_flush_at:
+              type: string
+              format: date-time
+              nullable: true
+            last_flush_ms:
+              type: number
+              nullable: true
+            last_error:
+              type: string
+              nullable: true
 
     IngestEntry:
       type: object
@@ -825,6 +905,35 @@ components:
           description: Per-entry error messages for any entries that failed to save.
           example: null
 
+    IngestAcceptedResponse:
+      type: object
+      required: [accepted, entries]
+      properties:
+        accepted:
+          type: integer
+          description: Number of entries queued for storage.
+          example: 2
+        entries:
+          type: array
+          description: Server-assigned `id` and `trace_id` of each queued entry, in request order.
+          items:
+            type: object
+            required: [id, trace_id]
+            properties:
+              id:
+                type: string
+                example: 01HZ3XKPQ7V8WBNM0S4DECJRA
+              trace_id:
+                type: string
+                example: 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+        errors:
+          type: array
+          nullable: true
+          items:
+            type: string
+          description: Entries that failed validation and were not queued.
+          example: null
+
     SearchResponse:
       type: object
       required: [total, limit, offset, entries]
@@ -858,6 +967,8 @@ components:
         ws_connections:
           type: integer
           example: 2
+        ingest:
+          $ref: '#/components/schemas/IngestStats'
 
     ErrorResponse:
       type: object
@@ -1245,7 +1356,37 @@ paths:
 
         > In MariaDB mode the `app_key` body field is **ignored** — the value
         > from the `clients` table is always used to prevent identity spoofing.
+
+        ---
+
+        ### Response mode
+
+        **Buffered (`INGEST_MODE=buffered`, default)** — entries are validated,
+        queued and answered with **202 Accepted** and their `id`/`trace_id`.
+        They are written in batches shortly after (every `INGEST_FLUSH_INTERVAL_MS`,
+        or as soon as `INGEST_BATCH_SIZE` entries are waiting). Send
+        `Prefer: return=representation` to wait until they are stored and get
+        **201 Created** with the stored entries instead; if that takes longer than
+        `INGEST_WAIT_TIMEOUT_MS` the answer is still 202 (the entries remain queued).
+        **503** with `Retry-After` means the buffer is full or the server is shutting down.
+
+        **Synchronous (`INGEST_MODE=sync`)** — every entry is written before the
+        response, which is always **201**. The `Prefer` header is ignored.
+
+        `GET /api/info` → `ingest.mode` tells clients which mode is active.
       tags: [Logs]
+      parameters:
+        - name: Prefer
+          in: header
+          required: false
+          description: |
+            RFC 7240 preference (buffered mode only). `return=representation`
+            waits for storage and answers 201 with the entries; `return=minimal`
+            (the default behaviour) answers 202. The applied preference is echoed
+            in `Preference-Applied`.
+          schema:
+            type: string
+            enum: [return=representation, return=minimal]
       security:
         - WriteKey: []
         - ApiKey: []
@@ -1302,7 +1443,10 @@ paths:
                       message: Retry scheduled
       responses:
         "201":
-          description: One or more entries were saved successfully.
+          description: |
+            One or more entries were saved: always in sync mode, and in
+            buffered mode with `Prefer: return=representation` (then with
+            `Preference-Applied: return=representation`).
           content:
             application/json:
               schema:
@@ -1323,10 +1467,40 @@ paths:
                     timestamp: "2025-01-15T14:22:00.000Z"
                     created_at: "2025-01-15T14:22:00.012Z"
                 errors: null
+        "202":
+          description: |
+            Buffered mode: the entries were queued and will be written shortly.
+            Also returned to `Prefer: return=representation` when storing takes
+            longer than `INGEST_WAIT_TIMEOUT_MS`.
+          headers:
+            Preference-Applied:
+              description: "`return=minimal` when that preference was sent."
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestAcceptedResponse'
         "400":
           $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
+        "503":
+          description: |
+            Buffered mode: the ingest buffer is full (storage is down or too slow)
+            or the server is shutting down. Nothing was queued; retry after
+            `Retry-After` seconds.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                example: 1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: Ingest buffer is full, retry later
 
     get:
       operationId: searchLogs

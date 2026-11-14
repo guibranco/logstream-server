@@ -89,6 +89,54 @@ final class MariaDBStorageTest extends TestCase
         self::assertCount(5, $this->ids(['level' => '', 'app_key' => []]));
     }
 
+    #[Test]
+    public function save_many_inserts_every_entry_in_one_statement(): void
+    {
+        $this->storage->saveMany([$this->entry('02A'), $this->entry('02B'), $this->entry('02C')]);
+
+        self::assertCount(8, $this->ids([]));
+    }
+
+    #[Test]
+    public function save_many_ignores_an_id_that_is_already_stored(): void
+    {
+        // A retried batch the database already committed must not fail on the primary key.
+        $this->storage->saveMany([$this->entry('01A'), $this->entry('02A')]);
+
+        self::assertCount(6, $this->ids([]));
+        self::assertSame('Entry 01A', $this->storage->findById('01A')?->message);
+    }
+
+    #[Test]
+    public function rows_store_dates_in_utc_whatever_the_offset_sent(): void
+    {
+        $row = MariaDBStorage::row(LogEntry::fromArray([
+            'id'         => '03A',
+            'trace_id'   => 't',
+            'batch_id'   => null,
+            'app_key'    => 'a',
+            'app_id'     => 'b',
+            'level'      => 'info',
+            'message'    => 'm',
+            'user_agent' => null,
+            'timestamp'  => '2026-03-01T12:30:00.123+02:00',
+            'created_at' => '2026-03-01T10:31:00.000Z',
+        ]));
+        $columns = array_combine(MariaDBStorage::INSERT_COLUMNS, $row);
+
+        self::assertSame('2026-03-01 10:30:00.123000', $columns['timestamp']);
+        self::assertSame('2026-03-01 10:31:00.000000', $columns['created_at']);
+    }
+
+    #[Test]
+    public function insert_sql_has_one_tuple_per_row_and_an_upsert_guard(): void
+    {
+        $sql = MariaDBStorage::insertSql(3);
+
+        self::assertSame(3, substr_count($sql, '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'));
+        self::assertStringContainsString('ON DUPLICATE KEY UPDATE id = id', $sql);
+    }
+
     /** Sorted ids of the entries the filters return. */
     private function ids(array $filters): array
     {
@@ -100,7 +148,12 @@ final class MariaDBStorageTest extends TestCase
 
     private function save(string $id, string $appKey, string $appId, string $level): void
     {
-        $this->storage->save(LogEntry::fromArray([
+        $this->storage->save($this->entry($id, $appKey, $appId, $level));
+    }
+
+    private function entry(string $id, string $appKey = 'misc-api', string $appId = 'web', string $level = 'info'): LogEntry
+    {
+        return LogEntry::fromArray([
             'id'         => $id,
             'trace_id'   => '6ba7b810-9dad-11d1-80b4-00c04fd430c8',
             'batch_id'   => null,
@@ -113,6 +166,6 @@ final class MariaDBStorageTest extends TestCase
             'context'    => null,
             'timestamp'  => '2026-03-01T10:00:00.000Z',
             'created_at' => '2026-03-01T10:00:00.000Z',
-        ]));
+        ]);
     }
 }

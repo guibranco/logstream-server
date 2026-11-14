@@ -12,6 +12,10 @@ use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Database\Connection;
 use LogService\Http\ClientIpResolver;
 use LogService\Http\Router;
+use LogService\Ingest\AsyncMysqlBatchWriter;
+use LogService\Ingest\IngestBuffer;
+use LogService\Ingest\IngestConfig;
+use LogService\Ingest\StorageBatchWriter;
 use LogService\Repository\ClientRepository;
 use LogService\Retention\CachedRetentionVolumeAnalyzer;
 use LogService\Retention\DatabaseRetentionEngine;
@@ -47,6 +51,13 @@ $apiSecret   = $_ENV['API_SECRET']   ?? '';
 $uiSecret    = $_ENV['UI_SECRET']    ?? '';
 $appVersion  = $_ENV['APP_VERSION']  ?? 'dev';
 $ipResolver  = ClientIpResolver::fromString($_ENV['TRUSTED_PROXIES'] ?? '');
+
+try {
+    $ingestConfig = IngestConfig::fromEnv($_ENV);
+} catch (\InvalidArgumentException $e) {
+    fwrite(STDERR, '[Config]   ' . $e->getMessage() . "\n");
+    exit(1);
+}
 
 // ─── Storage + Write Auth ─────────────────────────────────────────────────────
 
@@ -153,6 +164,50 @@ if ($retentionConfig->isEnabled()) {
 $loop = Loop::get();
 $hub  = new LogHub($uiSecret);
 
+// ─── Ingest buffer ────────────────────────────────────────────────────────────
+// INGEST_MODE=buffered (default): POST /api/logs queues entries, answers 202,
+// and a timer writes them in batches. INGEST_MODE=sync: write, then answer 201.
+
+$ingestBuffer = null;
+$asyncWriter  = null;
+
+if ($ingestConfig->isBuffered()) {
+    if ($storageType === 'mariadb' && $ingestConfig->dbDriver === IngestConfig::DRIVER_ASYNC) {
+        $asyncWriter = AsyncMysqlBatchWriter::connect(
+            host:     $_ENV['DB_HOST'] ?? '127.0.0.1',
+            port:     (int) ($_ENV['DB_PORT'] ?? 3306),
+            database: $_ENV['DB_NAME'] ?? 'logservice',
+            user:     $_ENV['DB_USER'] ?? 'root',
+            password: $_ENV['DB_PASS'] ?? '',
+        );
+        $batchWriter = $asyncWriter;
+    } else {
+        $batchWriter = new StorageBatchWriter($storage, $storageType === 'mariadb' ? 'pdo-mysql' : 'file');
+    }
+
+    $ingestBuffer = IngestBuffer::fromConfig(
+        $batchWriter,
+        $ingestConfig,
+        // Broadcast only what is stored, so the live view never shows an entry search can't find.
+        static function (array $entries) use ($hub): void {
+            foreach ($entries as $entry) {
+                $hub->broadcast($entry);
+            }
+        },
+    );
+    $ingestBuffer->start();
+
+    echo sprintf(
+        "[Ingest]   Buffered — writer: %s, batch: %d, every %dms, capacity: %d\n",
+        $batchWriter->name(),
+        $ingestConfig->batchSize,
+        $ingestConfig->flushIntervalMs,
+        $ingestConfig->capacity,
+    );
+} else {
+    echo "[Ingest]   Synchronous — every entry is written before the response\n";
+}
+
 $wsSocket = new SocketServer("0.0.0.0:{$wsPort}", [], $loop);
 $wsServer = new IoServer(
     new RatchetHttpServer(new WsServer($hub)),
@@ -175,6 +230,9 @@ $router = new Router(
     writeAuthDb:      $writeAuthDb,
     ipResolver:       $ipResolver,
     volumeAnalyzer:   $volumeAnalyzer,
+    ingestBuffer:     $ingestBuffer,
+    ingestWaitSeconds: $ingestConfig->waitTimeoutMs / 1000,
+    ingestDbDriver:   $ingestConfig->dbDriver,
 );
 
 $httpServer = new HttpServer(
@@ -238,6 +296,48 @@ if ($retentionRunner !== null) {
         }
         echo "[Retention] Done — {$totalPruned} entries pruned.\n";
     });
+}
+
+// ─── Graceful shutdown ────────────────────────────────────────────────────────
+// On SIGTERM (systemctl stop/restart, docker stop) or SIGINT: stop accepting
+// connections, write what is still buffered, then exit. A second signal exits
+// immediately.
+
+if (function_exists('pcntl_signal')) {
+    $shuttingDown = false;
+    $shutdown = function (int $signal) use (
+        &$shuttingDown, $loop, $httpSocket, $wsSocket, $ingestBuffer, $asyncWriter, $ingestConfig
+    ): void {
+        if ($shuttingDown) {
+            echo "[Shutdown] Second signal — exiting now.\n";
+            exit(1);
+        }
+        $shuttingDown = true;
+        echo "[Shutdown] Signal {$signal} received — closing listeners.\n";
+
+        $httpSocket->close();
+        $wsSocket->close();
+
+        if ($ingestBuffer === null) {
+            $loop->stop();
+            return;
+        }
+
+        $pending = $ingestBuffer->pending();
+        echo "[Shutdown] Writing {$pending} buffered entries...\n";
+        $ingestBuffer->drain($ingestConfig->shutdownTimeoutMs / 1000)->then(
+            function (bool $drained) use ($loop, $ingestBuffer, $asyncWriter): void {
+                echo $drained
+                    ? "[Shutdown] Buffer drained.\n"
+                    : '[Shutdown] Timed out — ' . $ingestBuffer->pending() . " entries were not written.\n";
+                $asyncWriter?->quit();
+                $loop->stop();
+            },
+        );
+    };
+
+    $loop->addSignal(SIGTERM, $shutdown);
+    $loop->addSignal(SIGINT, $shutdown);
 }
 
 $loop->run();

@@ -30,15 +30,31 @@ final class FileStorage implements StorageInterface
 
     public function save(LogEntry $entry): void
     {
-        $path = $this->pathFor($entry->timestamp);
-        $dir  = dirname($path);
+        $this->saveMany([$entry]);
+    }
 
-        if (!is_dir($dir)) {
-            mkdir($dir, 0755, true);
+    /**
+     * Append the entries to their day files, one write per file.
+     *
+     * @param list<LogEntry> $entries
+     */
+    public function saveMany(array $entries): void
+    {
+        $linesByPath = [];
+        foreach ($entries as $entry) {
+            $linesByPath[$this->pathFor($entry->timestamp)][] =
+                json_encode($entry->toArray(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
         }
 
-        $line = json_encode($entry->toArray(), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
-        file_put_contents($path, $line, FILE_APPEND | LOCK_EX);
+        foreach ($linesByPath as $path => $lines) {
+            $dir = dirname($path);
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
+            }
+            if (file_put_contents($path, implode('', $lines), FILE_APPEND | LOCK_EX) === false) {
+                throw new \RuntimeException("Could not write to {$path}");
+            }
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────────
