@@ -5,6 +5,12 @@ declare(strict_types=1);
 
 require __DIR__ . '/../vendor/autoload.php';
 
+// The server's own logger goes first so deprecations raised while loading
+// classes are caught. It prints to the console and, unless SELF_LOG_ENABLED=false,
+// stores everything as entries of the reserved application "logstream-server".
+$logger = new LogService\Logging\ServerLogger(projectRoot: dirname(__DIR__));
+$logger->registerPhpHandlers();
+
 use Dotenv\Dotenv;
 use LogService\Auth\DatabaseWriteAuth;
 use LogService\Auth\SecretGenerator;
@@ -16,6 +22,8 @@ use LogService\Ingest\AsyncMysqlBatchWriter;
 use LogService\Ingest\IngestBuffer;
 use LogService\Ingest\IngestConfig;
 use LogService\Ingest\StorageBatchWriter;
+use LogService\Logging\SelfLogConfig;
+use LogService\Logging\SelfLogSink;
 use LogService\Repository\ClientRepository;
 use LogService\Retention\CachedRetentionVolumeAnalyzer;
 use LogService\Retention\DatabaseRetentionEngine;
@@ -53,11 +61,14 @@ $appVersion  = $_ENV['APP_VERSION']  ?? 'dev';
 $ipResolver  = ClientIpResolver::fromString($_ENV['TRUSTED_PROXIES'] ?? '');
 
 try {
-    $ingestConfig = IngestConfig::fromEnv($_ENV);
+    $ingestConfig  = IngestConfig::fromEnv($_ENV);
+    $selfLogConfig = SelfLogConfig::fromEnv($_ENV);
 } catch (\InvalidArgumentException $e) {
-    fwrite(STDERR, '[Config]   ' . $e->getMessage() . "\n");
+    $logger->critical('config', $e->getMessage());
     exit(1);
 }
+
+$logger->configure($selfLogConfig, $appVersion);
 
 // ─── Storage + Write Auth ─────────────────────────────────────────────────────
 
@@ -87,25 +98,25 @@ if ($storageType === 'mariadb') {
     try {
         $appTokens = SecretGenerator::forAppTokens($_ENV);
     } catch (\InvalidArgumentException $e) {
-        fwrite(STDERR, '[Config]   APP_TOKEN_PREFIX: ' . $e->getMessage() . "\n");
+        $logger->critical('config', 'APP_TOKEN_PREFIX: ' . $e->getMessage());
         exit(1);
     }
     $clientRepository = new ClientRepository($appDb, $appTokens);
 
     $authMode = 'per-client (X-Api-Key / X-Api-Token  →  clients table)';
-    echo "[Storage]  MariaDB ({$_ENV['DB_HOST']}:{$_ENV['DB_PORT']}/{$_ENV['DB_NAME']})\n";
-    echo "[Clients]  Client management enabled\n";
+    $logger->info('storage', "MariaDB ({$_ENV['DB_HOST']}:{$_ENV['DB_PORT']}/{$_ENV['DB_NAME']})");
+    $logger->info('clients', 'Client management enabled');
 } else {
     $logPath   = $_ENV['LOG_PATH'] ?? __DIR__ . '/../storage/logs';
     $storage   = new FileStorage($logPath);
     $writeAuth = new SingleKeyWriteAuth($apiSecret);
 
     $authMode = 'single key (Authorization: Bearer API_SECRET)';
-    echo "[Storage]  File ({$logPath})\n";
+    $logger->info('storage', "File ({$logPath})");
 }
 
 if (empty($uiSecret)) {
-    echo "[WARN]     UI_SECRET is not set — read endpoints are unprotected!\n";
+    $logger->warning('config', 'UI_SECRET is not set — read endpoints are unprotected!');
 }
 
 // ─── Retention ────────────────────────────────────────────────────────────────
@@ -124,7 +135,7 @@ if ($retentionConfigPath !== null) {
     try {
         $retentionConfig = RetentionConfig::fromFile($retentionConfigPath);
     } catch (\Throwable $e) {
-        echo "[WARN]     Retention config error: " . $e->getMessage() . "\n";
+        $logger->warning('retention', 'Retention config error: ' . $e->getMessage());
     }
 }
 
@@ -154,9 +165,9 @@ if ($retentionConfig->isEnabled()) {
     } catch (\Throwable $e) {
         $policyLabel = 'policies unavailable (' . $e->getMessage() . ')';
     }
-    echo "[Retention] Enabled — {$policyLabel}, interval: {$retentionConfig->intervalHours}h\n";
+    $logger->info('retention', "Enabled — {$policyLabel}, interval: {$retentionConfig->intervalHours}h");
 } else {
-    echo "[Retention] Disabled\n";
+    $logger->info('retention', 'Disabled');
 }
 
 // ─── WebSocket hub ────────────────────────────────────────────────────────────
@@ -194,18 +205,36 @@ if ($ingestConfig->isBuffered()) {
                 $hub->broadcast($entry);
             }
         },
+        $logger->channel('ingest'),
     );
     $ingestBuffer->start();
 
-    echo sprintf(
-        "[Ingest]   Buffered — writer: %s, batch: %d, every %dms, capacity: %d\n",
+    $logger->info('ingest', sprintf(
+        'Buffered — writer: %s, batch: %d, every %dms, capacity: %d',
         $batchWriter->name(),
         $ingestConfig->batchSize,
         $ingestConfig->flushIntervalMs,
         $ingestConfig->capacity,
-    );
+    ));
 } else {
-    echo "[Ingest]   Synchronous — every entry is written before the response\n";
+    $logger->info('ingest', 'Synchronous — every entry is written before the response');
+}
+
+// ─── Self-logging ─────────────────────────────────────────────────────────────
+// From here on (and for everything logged above) the server's own messages are
+// stored like any client's: through the ingest buffer, or directly in sync mode.
+
+if ($selfLogConfig->enabled) {
+    $logger->attach(new SelfLogSink($storage, $hub, $ingestBuffer));
+    $logger->info('selflog', sprintf(
+        "Enabled — app_key: %s, app_id: %s, level ≥ %s, trace_id: %s",
+        SelfLogConfig::APP_KEY,
+        $selfLogConfig->appId,
+        $selfLogConfig->minLevel,
+        $logger->traceId(),
+    ));
+} else {
+    $logger->info('selflog', 'Disabled (SELF_LOG_ENABLED=false)');
 }
 
 $wsSocket = new SocketServer("0.0.0.0:{$wsPort}", [], $loop);
@@ -233,6 +262,7 @@ $router = new Router(
     ingestBuffer:     $ingestBuffer,
     ingestWaitSeconds: $ingestConfig->waitTimeoutMs / 1000,
     ingestDbDriver:   $ingestConfig->dbDriver,
+    selfLogging:      $selfLogConfig->enabled,
 );
 
 $httpServer = new HttpServer(
@@ -246,8 +276,11 @@ $httpServer = new HttpServer(
 $httpSocket = new SocketServer("0.0.0.0:{$httpPort}", [], $loop);
 $httpServer->listen($httpSocket);
 
-$httpServer->on('error', function (\Throwable $e) {
-    echo '[HTTP] Error: ' . $e->getMessage() . "\n";
+$httpServer->on('error', function (\Throwable $e) use ($logger) {
+    $logger->error('http', 'Error: ' . $e->getMessage(), [
+        'exception' => $e::class,
+        'previous'  => $e->getPrevious()?->getMessage(),
+    ]);
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────
@@ -262,39 +295,51 @@ echo "║  Write auth : {$authMode}\n";
 echo "║  Read key   : " . (empty($uiSecret) ? '⚠️  NOT SET' : '✅ set') . "\n";
 echo "╚══════════════════════════════════════════╝\n\n";
 
+$logger->info('startup', "LogStream server {$appVersion} started", [
+    'version'      => $appVersion,
+    'php_version'  => PHP_VERSION,
+    'http_port'    => $httpPort,
+    'ws_port'      => $wsPort,
+    'storage_type' => $storageType,
+    'write_auth'   => $authMode,
+    'read_key_set' => !empty($uiSecret),
+    'ingest_mode'  => $ingestConfig->mode,
+    'retention'    => $retentionRunner !== null,
+]);
+
 // ─── Retention periodic timer ─────────────────────────────────────────────────
 
 if ($retentionRunner !== null) {
     $retentionIntervalHours = max(1, (int) $retentionConfig->intervalHours);
 
     if ($retentionIntervalHours !== (int) $retentionConfig->intervalHours) {
-        echo "[Retention] interval_hours={$retentionConfig->intervalHours} is too small; clamping to {$retentionIntervalHours} hour(s).\n";
+        $logger->warning('retention', "interval_hours={$retentionConfig->intervalHours} is too small; clamping to {$retentionIntervalHours} hour(s).");
     }
 
     $retentionIntervalSeconds = $retentionIntervalHours * 3600;
 
-    $loop->addPeriodicTimer($retentionIntervalSeconds, function () use ($retentionRunner, $volumeAnalyzer) {
-        echo '[Retention] Running scheduled policies...' . "\n";
+    $loop->addPeriodicTimer($retentionIntervalSeconds, function () use ($retentionRunner, $volumeAnalyzer, $logger) {
+        $logger->info('retention', 'Running scheduled policies...');
         // Loading the policies can fail (e.g. MariaDB unreachable). An exception
         // escaping a timer stops the event loop, so log it and retry next tick.
         try {
             $results = $retentionRunner->runAll();
         } catch (\Throwable $e) {
-            echo '[Retention] Scheduled run failed: ' . $e->getMessage() . "\n";
+            $logger->error('retention', 'Scheduled run failed: ' . $e->getMessage());
             return;
         }
         $totalPruned = array_sum(array_map(fn($r) => $r->pruned, $results));
         foreach ($results as $r) {
-            $line = "[Retention] Policy '{$r->policy}': {$r->summary}";
             if ($r->error !== null) {
-                $line .= " (ERROR: {$r->error})";
+                $logger->error('retention', "Policy '{$r->policy}': {$r->summary} ({$r->error})", ['policy' => $r->policy]);
+            } else {
+                $logger->info('retention', "Policy '{$r->policy}': {$r->summary}", ['policy' => $r->policy, 'pruned' => $r->pruned]);
             }
-            echo $line . "\n";
         }
         if ($totalPruned > 0) {
             $volumeAnalyzer?->invalidate();
         }
-        echo "[Retention] Done — {$totalPruned} entries pruned.\n";
+        $logger->info('retention', "Done — {$totalPruned} entries pruned.", ['pruned' => $totalPruned]);
     });
 }
 
@@ -306,14 +351,14 @@ if ($retentionRunner !== null) {
 if (function_exists('pcntl_signal')) {
     $shuttingDown = false;
     $shutdown = function (int $signal) use (
-        &$shuttingDown, $loop, $httpSocket, $wsSocket, $ingestBuffer, $asyncWriter, $ingestConfig
+        &$shuttingDown, $loop, $httpSocket, $wsSocket, $ingestBuffer, $asyncWriter, $ingestConfig, $logger
     ): void {
         if ($shuttingDown) {
-            echo "[Shutdown] Second signal — exiting now.\n";
+            $logger->log('warning', 'shutdown', 'Second signal — exiting now.', now: true);
             exit(1);
         }
         $shuttingDown = true;
-        echo "[Shutdown] Signal {$signal} received — closing listeners.\n";
+        $logger->info('shutdown', "Signal {$signal} received — closing listeners.", ['signal' => $signal]);
 
         $httpSocket->close();
         $wsSocket->close();
@@ -324,12 +369,13 @@ if (function_exists('pcntl_signal')) {
         }
 
         $pending = $ingestBuffer->pending();
-        echo "[Shutdown] Writing {$pending} buffered entries...\n";
+        $logger->info('shutdown', "Writing {$pending} buffered entries...");
         $ingestBuffer->drain($ingestConfig->shutdownTimeoutMs / 1000)->then(
-            function (bool $drained) use ($loop, $ingestBuffer, $asyncWriter): void {
-                echo $drained
-                    ? "[Shutdown] Buffer drained.\n"
-                    : '[Shutdown] Timed out — ' . $ingestBuffer->pending() . " entries were not written.\n";
+            function (bool $drained) use ($loop, $ingestBuffer, $asyncWriter, $logger): void {
+                // The buffer no longer accepts entries: these are written directly.
+                $drained
+                    ? $logger->info('shutdown', 'Buffer drained.')
+                    : $logger->error('shutdown', 'Timed out — ' . $ingestBuffer->pending() . ' entries were not written.');
                 $asyncWriter?->quit();
                 $loop->stop();
             },

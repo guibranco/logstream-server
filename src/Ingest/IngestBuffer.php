@@ -68,9 +68,14 @@ final class IngestBuffer
 
     private readonly LoopInterface $loop;
 
+    /** @var \Closure(string, string, array<string, mixed>): void */
+    private readonly \Closure $log;
+
     /**
      * @param (callable(list<LogEntry>): void)|null $onPersisted Called with each stored batch (e.g. WebSocket broadcast).
      * @param (callable(): float)|null              $clock       Monotonic seconds; injectable for tests.
+     * @param (callable(string $level, string $message, array<string, mixed> $context): void)|null $log
+     *        Where failed flushes and dropped entries are reported; STDERR by default.
      */
     public function __construct(
         private readonly BatchWriterInterface $writer,
@@ -81,18 +86,25 @@ final class IngestBuffer
         ?LoopInterface $loop = null,
         ?callable $clock = null,
         private readonly int $isolateAfterFailures = 3,
+        ?callable $log = null,
     ) {
         $this->onPersisted = \Closure::fromCallable($onPersisted ?? static function (array $entries): void {});
         $this->clock       = $clock !== null
             ? \Closure::fromCallable($clock)
             : static fn(): float => hrtime(true) / 1e9;
         $this->loop        = $loop ?? Loop::get();
+        $this->log         = $log !== null
+            ? \Closure::fromCallable($log)
+            : static function (string $level, string $message, array $context = []): void {
+                fwrite(STDERR, '[Ingest]   ' . $message . "\n");
+            };
     }
 
     public static function fromConfig(
         BatchWriterInterface $writer,
         IngestConfig $config,
         ?callable $onPersisted = null,
+        ?callable $log = null,
     ): self {
         return new self(
             writer:               $writer,
@@ -100,6 +112,7 @@ final class IngestBuffer
             capacity:             $config->capacity,
             flushIntervalSeconds: $config->flushIntervalMs / 1000,
             onPersisted:          $onPersisted,
+            log:                  $log,
         );
     }
 
@@ -311,12 +324,12 @@ final class IngestBuffer
             foreach ($result['failed'] as [$entry, $ticket]) {
                 $this->droppedTotal++;
                 $ticket->dropped($entry);
-                fwrite(STDERR, sprintf(
-                    "[Ingest]   Dropped entry %s (app_key=%s): %s\n",
-                    $entry->id,
-                    $entry->appKey,
-                    $result['error']?->getMessage() ?? 'rejected by storage',
-                ));
+                $reason = $result['error']?->getMessage() ?? 'rejected by storage';
+                ($this->log)('error', sprintf('Dropped entry %s (app_key=%s): %s', $entry->id, $entry->appKey, $reason), [
+                    'entry_id' => $entry->id,
+                    'app_key'  => $entry->appKey,
+                    'error'    => $reason,
+                ]);
             }
             return ['ok' => $result['ok'], 'failed' => $result['untried'], 'error' => null];
         });
@@ -345,7 +358,7 @@ final class IngestBuffer
             try {
                 ($this->onPersisted)(array_map(static fn(array $item) => $item[0], $ok));
             } catch (\Throwable $e) {
-                fwrite(STDERR, '[Ingest]   onPersisted callback failed: ' . $e->getMessage() . "\n");
+                ($this->log)('warning', 'onPersisted callback failed: ' . $e->getMessage(), []);
             }
         }
 
@@ -358,14 +371,19 @@ final class IngestBuffer
                 $this->lastError = $error?->getMessage() ?? 'unknown error';
                 $backoff         = min(self::MAX_BACKOFF_SECONDS, 0.5 * (2 ** ($this->consecutiveFailures - 1)));
                 $this->retryAt   = $now + $backoff;
-                fwrite(STDERR, sprintf(
-                    "[Ingest]   Flush of %d entries failed (%d in a row%s), retrying in %.1fs: %s\n",
+                ($this->log)('warning', sprintf(
+                    'Flush of %d entries failed (%d in a row%s), retrying in %.1fs: %s',
                     count($failed),
                     $this->consecutiveFailures,
                     $isolated ? ', entry by entry' : '',
                     $backoff,
                     $this->lastError,
-                ));
+                ), [
+                    'entries'              => count($failed),
+                    'consecutive_failures' => $this->consecutiveFailures,
+                    'retry_in_seconds'     => $backoff,
+                    'error'                => $this->lastError,
+                ]);
             }
         }
 

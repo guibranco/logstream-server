@@ -325,6 +325,42 @@ about one flush interval's worth.
 Watch `GET /api/health` → `ingest` for `queued`, `consecutive_failures` and
 `last_error`. Set `INGEST_MODE=sync` to go back to the original behaviour.
 
+### Server's own logs
+
+The server stores its own messages as log entries of the application
+**`logstream-server`**, so you can search and watch them like any other app:
+
+| Category | What |
+|----------|------|
+| `startup`, `storage`, `clients`, `config`, `ingest`, `retention`, `selflog` | Boot messages (what was printed to the console), ending with `LogStream server <version> started` |
+| `php.deprecated`, `php.notice` | PHP deprecations and notices (level `notice`) |
+| `php.warning`, `php.error` | PHP warnings (`warning`) and recoverable errors (`error`) |
+| `php.exception`, `php.fatal` | Uncaught exceptions and fatal errors (`critical`), written straight to storage before the process exits |
+| `ingest` | Failed flushes (`warning`) and dropped entries (`error`) |
+| `retention`, `http`, `shutdown` | Scheduled retention runs, HTTP server errors, graceful shutdown |
+
+PHP errors carry `php_error`, `file` and `line` in `context`; an identical one
+is stored at most once every five minutes, with `repeated` counting the ones in
+between. Every entry of one server process shares a `trace_id`, so a whole run
+from boot to shutdown can be pulled up by trace. `app_id` is the host name
+unless `SELF_LOG_APP_ID` is set, and `user_agent` is
+`LogStream-Server/<version> (PHP <version>; <OS>)`.
+
+The server reports every PHP error type (`E_ALL`), even when `php.ini` hides
+deprecations. The console output is unchanged.
+
+```dotenv
+SELF_LOG_ENABLED=true     # false: print to the console only, store nothing
+SELF_LOG_LEVEL=info       # lowest level stored
+SELF_LOG_APP_ID=          # default: host name
+```
+
+`logstream-server` is reserved whether self-logging is on or off: it has no
+row in the `clients` table, `POST /api/clients` refuses it (409) and
+`POST /api/logs` rejects entries that use it, so no application can write as
+the server. `GET /api/info` reports `features.self_logging` and
+`self_logging.app_key`.
+
 ### Message template storage
 
 In MariaDB mode, apply `migrations/007_message_template.sql` to add the

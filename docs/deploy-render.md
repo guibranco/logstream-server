@@ -110,6 +110,7 @@ the `UI_SECRET`; the UI adds it.
 | `RETENTION_CONFIG` | `/app/render/retention.json` | |
 | `TRUSTED_PROXIES` | loopback + private ranges | Records the real client in `sender_ip` |
 | `APP_VERSION` | first 7 chars of `RENDER_GIT_COMMIT` | |
+| `SELF_LOG_ENABLED` | `true` | Stores the server's own messages as the app `logstream-server`; `false` turns it off |
 
 ---
 

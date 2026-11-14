@@ -507,6 +507,9 @@ Add these to your `.env` file (or pass them directly to `docker compose`):
 | `WS_PORT` | ❌ | Internal WebSocket port (default: `8080`) |
 | `LOG_PATH` | ❌ | Log path when using file storage (default: `./storage/logs`) |
 | `TRUSTED_PROXIES` | ❌ | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` is trusted for `sender_ip` (e.g. `172.16.0.0/12` for the Nginx container) |
+| `SELF_LOG_ENABLED` | ❌ | Store the server's own messages (startup, PHP deprecations/warnings/errors, ingest problems) as the app `logstream-server` (default: `true`) |
+| `SELF_LOG_LEVEL` | ❌ | Lowest level of those stored (default: `info`) |
+| `SELF_LOG_APP_ID` | ❌ | `app_id` of those entries (default: the container's host name) |
 
 ---
 

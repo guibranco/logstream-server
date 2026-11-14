@@ -19,6 +19,8 @@ services:
       STORAGE_TYPE: ${STORAGE_TYPE:-mariadb}
       INGEST_MODE:  ${INGEST_MODE:-buffered}
       DB_DRIVER:    ${DB_DRIVER:-async}
+      SELF_LOG_ENABLED: ${SELF_LOG_ENABLED:-true}
+      SELF_LOG_LEVEL:   ${SELF_LOG_LEVEL:-info}
       DB_HOST:      db
       DB_PORT:      3306
       DB_NAME:      logservice

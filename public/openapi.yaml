@@ -661,6 +661,24 @@ components:
                 True when `INGEST_MODE=buffered`: `POST /api/logs` answers
                 `202 Accepted` and honours `Prefer: return=representation|minimal`.
               example: true
+            self_logging:
+              type: boolean
+              description: |
+                True when the server stores its own messages (startup, PHP
+                deprecations/warnings/errors, ingest problems) as entries of
+                the application `logstream-server` (`SELF_LOG_ENABLED`).
+              example: true
+        self_logging:
+          type: object
+          description: The reserved application the server's own messages are stored under.
+          properties:
+            enabled:
+              type: boolean
+              example: true
+            app_key:
+              type: string
+              description: Reserved — cannot be registered as a client or used on `POST /api/logs`.
+              example: logstream-server
         ingest:
           $ref: '#/components/schemas/IngestMode'
 
@@ -1994,7 +2012,8 @@ paths:
 
         The `app_key` must be lowercase letters, digits, and hyphens only,
         and must start with a letter or digit. Returns `409` if the
-        `app_key` is already taken.
+        `app_key` is already taken, or is `logstream-server` (reserved for
+        the server's own logs).
 
         Only available when `STORAGE_TYPE=mariadb`. Returns `503` otherwise.
 

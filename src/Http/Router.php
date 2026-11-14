@@ -8,6 +8,7 @@ use LogService\Auth\CacheFlushableInterface;
 use LogService\Auth\WriteAuthInterface;
 use LogService\Ingest\IngestBuffer;
 use LogService\Ingest\IngestConfig;
+use LogService\Logging\SelfLogConfig;
 use LogService\Models\LogEntry;
 use LogService\Models\MessageTemplate;
 use LogService\Repository\ClientRepository;
@@ -18,6 +19,7 @@ use LogService\Retention\RetentionRunner;
 use LogService\Retention\RetentionVolumeAnalyzerInterface;
 use LogService\Storage\ContextFilter;
 use LogService\Storage\StorageInterface;
+use LogService\Support\Identifier;
 use LogService\WebSocket\LogHub;
 use Psr\Http\Message\ServerRequestInterface;
 use React\Http\Message\Response;
@@ -66,6 +68,8 @@ final class Router
         private readonly ?IngestBuffer                       $ingestBuffer      = null,
         private readonly float                               $ingestWaitSeconds = 10.0,
         private readonly string                              $ingestDbDriver    = IngestConfig::DRIVER_PDO,
+        /** Whether the server stores its own messages under the reserved app_key "logstream-server". */
+        private readonly bool                                $selfLogging       = false,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -431,6 +435,12 @@ final class Router
                 'multi_value_filters' => true,
                 // POST /api/logs answers 202 and honours Prefer: return=representation|minimal.
                 'async_ingest'      => $this->ingestBuffer !== null,
+                // The server's own messages are stored as entries of this app_key.
+                'self_logging'      => $this->selfLogging,
+            ],
+            'self_logging' => [
+                'enabled' => $this->selfLogging,
+                'app_key' => SelfLogConfig::APP_KEY,
             ],
             'ingest'       => $this->ingestInfo(withStats: false),
         ], 200, $cors);
@@ -480,6 +490,11 @@ final class Router
             $entryAppKey = $isSingleKey
                 ? ($raw['app_key'] ?? $defaultAppKey)
                 : $resolvedAppKey;
+
+            if (SelfLogConfig::isReservedAppKey(is_string($entryAppKey) ? $entryAppKey : null)) {
+                $errors[] = "Entry #{$i}: app_key '" . SelfLogConfig::APP_KEY . "' is reserved for the server's own logs";
+                continue;
+            }
 
             try {
                 [$message, $template] = MessageTemplate::resolve(
@@ -785,6 +800,11 @@ final class Router
                 'error' => "'app_key' must be lowercase letters, numbers, and hyphens only.",
             ], 422, $cors);
         }
+        if (SelfLogConfig::isReservedAppKey($appKey)) {
+            return $this->json([
+                'error' => "'app_key' '" . SelfLogConfig::APP_KEY . "' is reserved for the server's own logs.",
+            ], 409, $cors);
+        }
         try {
             $client = $this->clientRepository->create($name, $appKey);
         } catch (\RuntimeException $e) {
@@ -995,42 +1015,11 @@ final class Router
 
     private function ulid(): string
     {
-        static $lastMs  = 0;
-        static $lastRnd = 0;
-
-        $ms = (int)(microtime(true) * 1000);
-
-        if ($ms === $lastMs) {
-            $lastRnd++;
-        } else {
-            $lastMs  = $ms;
-            $lastRnd = random_int(0, 0x7FFFFFFFFF);
-        }
-
-        $enc = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-        $ts  = $ms;
-        $out = '';
-
-        for ($i = 9; $i >= 0; $i--) {
-            $out = $enc[$ts % 32] . $out;
-            $ts  = intdiv($ts, 32);
-        }
-
-        $rnd = $lastRnd;
-        for ($i = 15; $i >= 0; $i--) {
-            $out = $enc[$rnd % 32] . $out;
-            $rnd = intdiv($rnd, 32);
-        }
-
-        return strrev($out);
+        return Identifier::ulid();
     }
 
     private function uuid4(): string
     {
-        $bytes    = random_bytes(16);
-        $bytes[6] = chr((ord($bytes[6]) & 0x0f) | 0x40);
-        $bytes[8] = chr((ord($bytes[8]) & 0x3f) | 0x80);
-
-        return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($bytes), 4));
+        return Identifier::uuid4();
     }
 }
