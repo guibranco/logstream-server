@@ -546,7 +546,7 @@ components:
 
     RetentionVolumeResponse:
       type: object
-      required: [generated_at, days, size_basis, buckets, older, future, policies, totals]
+      required: [generated_at, days, size_basis, buckets, older, future, policies, totals, storage]
       properties:
         generated_at:
           type: string
@@ -575,6 +575,45 @@ components:
             $ref: '#/components/schemas/RetentionVolumePolicy'
         totals:
           $ref: '#/components/schemas/RetentionVolumeTotals'
+        storage:
+          allOf:
+            - $ref: '#/components/schemas/RetentionVolumeStorage'
+          nullable: true
+          description: >
+            On-disk size of the log table, split into data and indexes. Only in
+            MariaDB/MySQL storage; null in file storage or when
+            `information_schema` cannot be read.
+
+    RetentionVolumeStorage:
+      type: object
+      description: >
+        From `information_schema.TABLES`. InnoDB keeps these as statistics
+        (refreshed by `ANALYZE TABLE` and in the background), so they are
+        estimates, and they cover the whole table, not a single day.
+      required: [table, engine, data_bytes, index_bytes, free_bytes, total_bytes, rows_estimate]
+      properties:
+        table:
+          type: string
+          example: log_entries
+        engine:
+          type: string
+          nullable: true
+          example: InnoDB
+        data_bytes:
+          type: integer
+          description: "`DATA_LENGTH` — rows, including the clustered primary key in InnoDB."
+        index_bytes:
+          type: integer
+          description: "`INDEX_LENGTH` — every secondary and full-text index."
+        free_bytes:
+          type: integer
+          description: "`DATA_FREE` — allocated but unused space (reclaimable by `OPTIMIZE TABLE`)."
+        total_bytes:
+          type: integer
+          description: data_bytes + index_bytes.
+        rows_estimate:
+          type: integer
+          description: "`TABLE_ROWS` — an estimate for InnoDB."
 
     InfoResponse:
       type: object

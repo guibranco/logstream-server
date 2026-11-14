@@ -86,10 +86,28 @@ final class RetentionVolumeReportTest extends TestCase
         $out = RetentionVolumeReport::fromDailyTotals([], [], 1, RetentionVolumeReport::SIZE_BASIS_PAYLOAD, $this->today)->toArray();
 
         self::assertSame(
-            ['generated_at', 'days', 'size_basis', 'buckets', 'older', 'future', 'policies', 'totals'],
+            ['generated_at', 'days', 'size_basis', 'buckets', 'older', 'future', 'policies', 'totals', 'storage'],
             array_keys($out),
         );
         self::assertSame('payload', $out['size_basis']);
         self::assertSame(1, $out['days']);
+        self::assertNull($out['storage']);
+    }
+
+    #[Test]
+    public function it_carries_the_table_storage_breakdown(): void
+    {
+        $storage = ['table' => 'log_entries', 'data_bytes' => 100, 'index_bytes' => 40];
+
+        $out = RetentionVolumeReport::fromDailyTotals(
+            [],
+            [],
+            1,
+            RetentionVolumeReport::SIZE_BASIS_PAYLOAD,
+            $this->today,
+            $storage,
+        )->toArray();
+
+        self::assertSame($storage, $out['storage']);
     }
 }

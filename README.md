@@ -297,7 +297,12 @@ it like Seq's storage view: volume by age with a numbered marker at each
 policy's `older_than_days`.
 
 Sizes are exact JSONL line sizes in file mode and the length of message,
-template and context in MariaDB mode. The report reads every stored entry, so
+template and context in MariaDB mode. In MariaDB mode the report also has a
+`storage` object with the table's real on-disk size split into data and
+indexes, read from `information_schema.TABLES` (`DATA_LENGTH`, `INDEX_LENGTH`,
+`DATA_FREE`, `TABLE_ROWS`). Those are InnoDB statistics for the whole table,
+so they are estimates and not split by day; run `ANALYZE TABLE log_entries`
+to refresh them. It is `null` in file mode. The report reads every stored entry, so
 the server caches it for up to 5 minutes; editing a policy, or a run that
 deletes entries, refreshes it.
 

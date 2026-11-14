@@ -119,7 +119,70 @@ final class DatabaseRetentionVolumeAnalyzerTest extends TestCase
         self::assertSame(1, $report->totals['count']);
     }
 
+    #[Test]
+    public function it_has_no_storage_breakdown_without_information_schema(): void
+    {
+        $this->insert(0);
+
+        $report = $this->analyzer->analyze([], 7);
+
+        self::assertNull($report->storage);
+    }
+
+    #[Test]
+    public function it_splits_table_storage_into_data_and_indexes(): void
+    {
+        $this->fakeInformationSchema([
+            ['logs', 'log_entries', 'InnoDB', 16384000, 8192000, 4194304, 1234],
+            ['other', 'log_entries', 'InnoDB', 1, 1, 1, 1],
+            ['logs', 'clients', 'InnoDB', 2, 2, 2, 2],
+        ]);
+
+        $report = $this->analyzer->analyze([], 7);
+
+        self::assertSame(
+            [
+                'table'         => 'log_entries',
+                'engine'        => 'InnoDB',
+                'data_bytes'    => 16384000,
+                'index_bytes'   => 8192000,
+                'free_bytes'    => 4194304,
+                'total_bytes'   => 24576000,
+                'rows_estimate' => 1234,
+            ],
+            $report->storage,
+        );
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Mimics MariaDB's information_schema.TABLES and DATABASE() on SQLite.
+     *
+     * @param list<array{string, string, string, int, int, int, int}> $rows
+     */
+    private function fakeInformationSchema(array $rows): void
+    {
+        $this->pdo->exec("ATTACH DATABASE ':memory:' AS information_schema");
+        $this->pdo->exec(
+            'CREATE TABLE information_schema.TABLES (
+                TABLE_SCHEMA TEXT, TABLE_NAME TEXT, ENGINE TEXT,
+                DATA_LENGTH INTEGER, INDEX_LENGTH INTEGER, DATA_FREE INTEGER, TABLE_ROWS INTEGER
+            )',
+        );
+
+        $insert = $this->pdo->prepare('INSERT INTO information_schema.TABLES VALUES (?, ?, ?, ?, ?, ?, ?)');
+        foreach ($rows as $row) {
+            $insert->execute($row);
+        }
+
+        $database = static fn(): string => 'logs';
+        if (method_exists($this->pdo, 'createFunction')) {
+            $this->pdo->createFunction('DATABASE', $database, 0); // Pdo\Sqlite (PHP 8.4+)
+        } else {
+            $this->pdo->sqliteCreateFunction('DATABASE', $database, 0);
+        }
+    }
 
     private function insert(int $age, string $level = 'info', string $message = 'msg', ?string $context = null): void
     {
