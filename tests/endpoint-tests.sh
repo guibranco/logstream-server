@@ -151,6 +151,7 @@ RESPONSE=$(curl -s -o /tmp/ls_ingest_body.json -w "%{http_code}" \
     -H "Content-Type: application/json" \
     "${WRITE_AUTH_HEADERS[@]}" \
     -H "User-Agent: EndpointTest/1.0" \
+    -H "Prefer: return=representation" \
     -d "$INGEST_BODY")
 
 assert_status "POST /api/logs (single)" "201" "$RESPONSE"
@@ -186,12 +187,55 @@ RESPONSE=$(curl -s -o /tmp/ls_batch_body.json -w "%{http_code}" \
     -X POST "$BASE_URL/api/logs" \
     -H "Content-Type: application/json" \
     "${WRITE_AUTH_HEADERS[@]}" \
+    -H "Prefer: return=representation" \
     -d "$BATCH_BODY")
 
 assert_status "POST /api/logs (batch of 3)" "201" "$RESPONSE"
 
 SAVED=$(json_field "$(cat /tmp/ls_batch_body.json)" "saved")
 assert_json_field "saved == 3" "3" "$SAVED"
+
+# ── 4b. Ingest – default response (202 when buffered, 201 when sync) ─────────
+
+header "Ingest without Prefer"
+
+INGEST_MODE=$(curl -s "$BASE_URL/api/info" | grep -oP '"mode":\s*"\K[^"]+' | head -1)
+EXPECTED_STATUS=$([[ "$INGEST_MODE" == "buffered" ]] && echo 202 || echo 201)
+
+RESPONSE=$(curl -s -o /tmp/ls_async_body.json -D /tmp/ls_async_headers.txt -w "%{http_code}" \
+    -X POST "$BASE_URL/api/logs" \
+    -H "Content-Type: application/json" \
+    "${WRITE_AUTH_HEADERS[@]}" \
+    -d '{"app_key": "endpoint-test", "app_id": "ci", "category": "ci-async", "message": "Accepted entry"}')
+
+assert_status "POST /api/logs (ingest mode: ${INGEST_MODE:-unknown})" "$EXPECTED_STATUS" "$RESPONSE"
+
+if [[ "$INGEST_MODE" == "buffered" ]]; then
+    ACCEPTED=$(json_field "$(cat /tmp/ls_async_body.json)" "accepted")
+    assert_json_field "accepted == 1" "1" "$ACCEPTED"
+
+    ASYNC_ID=$(grep -oP '"id":\s*"\K[^"]+' /tmp/ls_async_body.json | head -1)
+    # Stored by the next flush (INGEST_FLUSH_INTERVAL_MS, 500 ms by default).
+    STATUS="000"
+    for _ in $(seq 1 20); do
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $UI_SECRET" "$BASE_URL/api/logs/$ASYNC_ID")
+        [[ "$STATUS" == "200" ]] && break
+        sleep 0.25
+    done
+    assert_status "GET /api/logs/$ASYNC_ID after flush" "200" "$STATUS"
+
+    RESPONSE=$(curl -s -o /dev/null -D /tmp/ls_minimal_headers.txt -w "%{http_code}" \
+        -X POST "$BASE_URL/api/logs" \
+        -H "Content-Type: application/json" \
+        "${WRITE_AUTH_HEADERS[@]}" \
+        -H "Prefer: return=minimal" \
+        -d '{"app_key": "endpoint-test", "app_id": "ci", "message": "Minimal entry"}')
+    assert_status "POST /api/logs (Prefer: return=minimal)" "202" "$RESPONSE"
+
+    APPLIED=$(grep -i '^Preference-Applied:' /tmp/ls_minimal_headers.txt | cut -d' ' -f2- | tr -d '\r')
+    assert_json_field "Preference-Applied == return=minimal" "return=minimal" "$APPLIED"
+fi
 
 # ── 5. Get by ID ──────────────────────────────────────────────────────────────
 

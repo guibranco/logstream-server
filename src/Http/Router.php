@@ -6,6 +6,8 @@ namespace LogService\Http;
 
 use LogService\Auth\CacheFlushableInterface;
 use LogService\Auth\WriteAuthInterface;
+use LogService\Ingest\IngestBuffer;
+use LogService\Ingest\IngestConfig;
 use LogService\Models\LogEntry;
 use LogService\Models\MessageTemplate;
 use LogService\Repository\ClientRepository;
@@ -19,6 +21,7 @@ use LogService\Storage\StorageInterface;
 use LogService\WebSocket\LogHub;
 use Psr\Http\Message\ServerRequestInterface;
 use React\Http\Message\Response;
+use React\Promise\PromiseInterface;
 
 /**
  * HTTP router for the log ingestion and query API.
@@ -35,6 +38,12 @@ use React\Http\Message\Response;
  *
  *   Public (no auth):
  *     GET /api/health, GET /docs, GET /, GET /openapi.yaml, OPTIONS *
+ *
+ * Ingest (POST /api/logs):
+ *   Without an IngestBuffer every entry is written before responding (201).
+ *   With one (INGEST_MODE=buffered) entries are queued and answered with
+ *   202 Accepted; `Prefer: return=representation` waits for the write and
+ *   answers 201 with the stored entries, like the synchronous mode.
  */
 final class Router
 {
@@ -54,11 +63,15 @@ final class Router
         private readonly ?CacheFlushableInterface            $writeAuthDb       = null,
         private readonly ClientIpResolver                    $ipResolver        = new ClientIpResolver(),
         private readonly ?RetentionVolumeAnalyzerInterface   $volumeAnalyzer    = null,
+        private readonly ?IngestBuffer                       $ingestBuffer      = null,
+        private readonly float                               $ingestWaitSeconds = 10.0,
+        private readonly string                              $ingestDbDriver    = IngestConfig::DRIVER_PDO,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
 
-    public function handle(ServerRequestInterface $request): Response
+    /** @return Response|PromiseInterface<Response> */
+    public function handle(ServerRequestInterface $request): Response|PromiseInterface
     {
         $method = $request->getMethod();
         $path   = rtrim($request->getUri()->getPath(), '/') ?: '/';
@@ -401,6 +414,7 @@ final class Router
             'status'         => 'ok',
             'time'           => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339),
             'ws_connections' => $this->hub->getConnectionCount(),
+            'ingest'         => $this->ingestInfo(withStats: true),
         ], 200, $cors);
     }
 
@@ -415,7 +429,10 @@ final class Router
                 'websocket'         => true,
                 // app_key[], app_id[] and level[] on GET /api/logs match any of the values.
                 'multi_value_filters' => true,
+                // POST /api/logs answers 202 and honours Prefer: return=representation|minimal.
+                'async_ingest'      => $this->ingestBuffer !== null,
             ],
+            'ingest'       => $this->ingestInfo(withStats: false),
         ], 200, $cors);
     }
 
@@ -425,11 +442,12 @@ final class Router
      *                                     for single-key auth it is '__single_key__'
      *                                     and the body field takes precedence.
      */
+    /** @return Response|PromiseInterface<Response> */
     private function handleIngest(
         ServerRequestInterface $request,
         array $cors,
         ?string $resolvedAppKey,
-    ): Response {
+    ): Response|PromiseInterface {
         $body = json_decode((string) $request->getBody(), true);
 
         if (!is_array($body)) {
@@ -455,8 +473,8 @@ final class Router
             ? $body['logs']
             : [$body];
 
-        $saved  = [];
-        $errors = [];
+        $entries = [];
+        $errors  = [];
 
         foreach ($rawLogs as $i => $raw) {
             $entryAppKey = $isSingleKey
@@ -470,7 +488,7 @@ final class Router
                     $raw['context'] ?? null,
                 );
 
-                $entry = LogEntry::fromArray([
+                $entries[$i] = LogEntry::fromArray([
                     'id'         => $this->ulid(),
                     'trace_id'   => $raw['trace_id']   ?? $this->uuid4(),
                     'batch_id'   => $raw['batch_id']   ?? $topBatchId,
@@ -486,7 +504,34 @@ final class Router
                     'created_at' => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339_EXTENDED),
                     'sender_ip'  => $senderIp,
                 ]);
+            } catch (\Throwable $e) {
+                $errors[] = "Entry #{$i}: " . $e->getMessage();
+            }
+        }
 
+        if ($this->ingestBuffer === null) {
+            return $this->ingestSynchronously($entries, $errors, $cors);
+        }
+
+        if ($entries === []) {
+            return $this->json(['saved' => 0, 'entries' => [], 'errors' => $errors ?: null], 400, $cors);
+        }
+
+        return $this->ingestBuffered($entries, $errors, $this->preferredReturn($request), $cors);
+    }
+
+    /**
+     * Original behaviour: write each entry, then answer 201 with what was stored.
+     *
+     * @param array<int, LogEntry> $entries Keyed by position in the request.
+     * @param list<string>         $errors
+     */
+    private function ingestSynchronously(array $entries, array $errors, array $cors): Response
+    {
+        $saved = [];
+
+        foreach ($entries as $i => $entry) {
+            try {
                 $this->storage->save($entry);
                 $this->hub->broadcast($entry);
                 $saved[] = $entry->toArray();
@@ -505,12 +550,111 @@ final class Router
     }
 
     /**
-     * A filter given once (`level=error`) or as a list (`level[]=error&level[]=critical`).
-     * Lists keep their distinct non-empty values; a single value stays a plain string,
-     * so older clients and storage paths see exactly what they did before.
+     * Queue the entries. Answers 202 straight away, or — with
+     * `Prefer: return=representation` — 201 once they are written.
      *
-     * @return string|list<string>|null
+     * @param array<int, LogEntry> $entries Keyed by position in the request.
+     * @param list<string>         $errors  Validation errors so far.
+     * @param 'minimal'|'representation'|null $prefer
+     * @return Response|PromiseInterface<Response>
      */
+    private function ingestBuffered(array $entries, array $errors, ?string $prefer, array $cors): Response|PromiseInterface
+    {
+        $ticket = $this->ingestBuffer->enqueue(array_values($entries));
+
+        if ($ticket === null) {
+            $reason = $this->ingestBuffer->isAccepting()
+                ? 'Ingest buffer is full, retry later'
+                : 'Server is shutting down, retry later';
+            return $this->json(['error' => $reason], 503, $cors + ['Retry-After' => '1']);
+        }
+
+        $applied = $prefer !== null ? ['Preference-Applied' => "return={$prefer}"] : [];
+
+        if ($prefer !== 'representation') {
+            return $this->acceptedResponse($entries, $errors, $cors + $applied);
+        }
+
+        return $ticket->wait($this->ingestWaitSeconds)->then(
+            function (?array $droppedIds) use ($entries, $errors, $cors, $applied): Response {
+                if ($droppedIds === null) {
+                    // Still queued (storage slow or down): it will be written, just not yet.
+                    return $this->acceptedResponse($entries, $errors, $cors);
+                }
+
+                $saved = [];
+                foreach ($entries as $i => $entry) {
+                    if (in_array($entry->id, $droppedIds, true)) {
+                        $errors[] = "Entry #{$i}: rejected by storage";
+                        continue;
+                    }
+                    $saved[] = $entry->toArray();
+                }
+
+                return $this->json([
+                    'saved'   => count($saved),
+                    'entries' => $saved,
+                    'errors'  => $errors ?: null,
+                ], $saved === [] ? 400 : 201, $cors + $applied);
+            },
+        );
+    }
+
+    /**
+     * 202 body: just enough to correlate (id + trace_id per accepted entry).
+     *
+     * @param array<int, LogEntry> $entries
+     * @param list<string>         $errors
+     */
+    private function acceptedResponse(array $entries, array $errors, array $headers): Response
+    {
+        return $this->json([
+            'accepted' => count($entries),
+            'entries'  => array_values(array_map(
+                static fn(LogEntry $e) => ['id' => $e->id, 'trace_id' => $e->traceId],
+                $entries,
+            )),
+            'errors'   => $errors ?: null,
+        ], 202, $headers);
+    }
+
+    /**
+     * The `return` preference of an RFC 7240 Prefer header, if any.
+     * e.g. "Prefer: return=representation" or "Prefer: respond-async, return=minimal".
+     *
+     * @return 'minimal'|'representation'|null
+     */
+    private function preferredReturn(ServerRequestInterface $request): ?string
+    {
+        foreach ($request->getHeader('Prefer') as $header) {
+            foreach (explode(',', $header) as $preference) {
+                $pair = array_map('trim', explode('=', explode(';', $preference, 2)[0], 2));
+                if (strtolower($pair[0]) === 'return' && isset($pair[1])) {
+                    $value = strtolower(trim($pair[1], '"'));
+                    if ($value === 'minimal' || $value === 'representation') {
+                        return $value;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** @return array<string, mixed> */
+    private function ingestInfo(bool $withStats): array
+    {
+        if ($this->ingestBuffer === null) {
+            return ['mode' => IngestConfig::MODE_SYNC];
+        }
+
+        $info = [
+            'mode'      => IngestConfig::MODE_BUFFERED,
+            'db_driver' => $this->storageType === 'mariadb' ? $this->ingestDbDriver : null,
+        ];
+
+        return $withStats ? $info + $this->ingestBuffer->stats() : $info;
+    }
+
     private static function oneOrMany(mixed $raw): string|array|null
     {
         if (is_string($raw)) {
@@ -816,7 +960,8 @@ final class Router
         return [
             'Access-Control-Allow-Origin'  => '*',
             'Access-Control-Allow-Methods' => 'GET, POST, PUT, DELETE, OPTIONS',
-            'Access-Control-Allow-Headers' => 'Content-Type, Authorization, X-Api-Key, X-Api-Token, X-App-Key, X-App-Id',
+            'Access-Control-Allow-Headers'  => 'Content-Type, Authorization, X-Api-Key, X-Api-Token, X-App-Key, X-App-Id, Prefer',
+            'Access-Control-Expose-Headers' => 'Preference-Applied, Retry-After',
         ];
     }
 

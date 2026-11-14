@@ -17,33 +17,88 @@ final class MariaDBStorage implements StorageInterface
 
     // ──────────────────────────────────────────────────────────────────────────
 
+    /** Columns written for every entry, in the order of {@see self::row()}. */
+    public const INSERT_COLUMNS = [
+        'id', 'trace_id', 'batch_id', 'app_key', 'app_id',
+        'user_agent', 'sender_ip', 'level', 'category', 'message', 'message_template',
+        'context', 'timestamp', 'created_at',
+    ];
+
     public function save(LogEntry $entry): void
     {
-        $sql = <<<SQL
-            INSERT INTO log_entries
-                (id, trace_id, batch_id, app_key, app_id,
-                 user_agent, sender_ip, level, category, message, message_template, context, timestamp)
-            VALUES
-                (:id, :trace_id, :batch_id, :app_key, :app_id,
-                 :user_agent, :sender_ip, :level, :category, :message, :message_template, :context, :timestamp)
-        SQL;
+        $this->saveMany([$entry]);
+    }
 
-        $stmt = $this->db->pdo()->prepare($sql);
-        $stmt->execute([
-            ':id'         => $entry->id,
-            ':trace_id'   => $entry->traceId,
-            ':batch_id'   => $entry->batchId,
-            ':app_key'    => $entry->appKey,
-            ':app_id'     => $entry->appId,
-            ':user_agent' => $entry->userAgent,
-            ':sender_ip'  => $entry->senderIp,
-            ':level'      => $entry->level,
-            ':category'   => $entry->category,
-            ':message'    => $entry->message,
-            ':message_template' => $entry->messageTemplate,
-            ':context'    => $entry->context !== null ? json_encode($entry->context) : null,
-            ':timestamp'  => $entry->timestamp->format('Y-m-d H:i:s.u'),
-        ]);
+    /**
+     * Insert all entries with one multi-row INSERT.
+     *
+     * Re-inserting an id that is already stored is a no-op, so a batch that is
+     * retried after the database committed it (e.g. the reply was lost) does
+     * not fail on the primary key forever.
+     *
+     * @param list<LogEntry> $entries
+     */
+    public function saveMany(array $entries): void
+    {
+        if ($entries === []) {
+            return;
+        }
+
+        $pdo    = $this->db->pdo();
+        $driver = (string) $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME);
+
+        $params = [];
+        foreach ($entries as $entry) {
+            array_push($params, ...self::row($entry));
+        }
+
+        $pdo->prepare(self::insertSql(count($entries), $driver))->execute($params);
+    }
+
+    /**
+     * The INSERT statement for $rows entries, with positional placeholders.
+     * Shared with the async writer so both drivers store rows identically.
+     */
+    public static function insertSql(int $rows, string $driver = 'mysql'): string
+    {
+        $tuple  = '(' . implode(', ', array_fill(0, count(self::INSERT_COLUMNS), '?')) . ')';
+        $values = implode(",\n", array_fill(0, max(1, $rows), $tuple));
+        $cols   = implode(', ', self::INSERT_COLUMNS);
+
+        // SQLite backs the unit tests; it has no ON DUPLICATE KEY.
+        return $driver === 'sqlite'
+            ? "INSERT INTO log_entries ({$cols}) VALUES\n{$values}\nON CONFLICT(id) DO NOTHING"
+            : "INSERT INTO log_entries ({$cols}) VALUES\n{$values}\nON DUPLICATE KEY UPDATE id = id";
+    }
+
+    /**
+     * One entry as positional values in {@see self::INSERT_COLUMNS} order.
+     *
+     * Dates are converted to UTC here rather than relying on the session time
+     * zone, so the value stored is the same whichever connection writes it.
+     *
+     * @return list<string|null>
+     */
+    public static function row(LogEntry $entry): array
+    {
+        $utc = new \DateTimeZone('UTC');
+
+        return [
+            $entry->id,
+            $entry->traceId,
+            $entry->batchId,
+            $entry->appKey,
+            $entry->appId,
+            $entry->userAgent,
+            $entry->senderIp,
+            $entry->level,
+            $entry->category,
+            $entry->message,
+            $entry->messageTemplate,
+            $entry->context !== null ? json_encode($entry->context) : null,
+            $entry->timestamp->setTimezone($utc)->format('Y-m-d H:i:s.u'),
+            $entry->createdAt->setTimezone($utc)->format('Y-m-d H:i:s.u'),
+        ];
     }
 
     // ──────────────────────────────────────────────────────────────────────────

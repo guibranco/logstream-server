@@ -17,6 +17,8 @@ services:
       UI_SECRET_PREFIX:  ${UI_SECRET_PREFIX-lsu_}
       APP_TOKEN_PREFIX:  ${APP_TOKEN_PREFIX-lss_}
       STORAGE_TYPE: ${STORAGE_TYPE:-mariadb}
+      INGEST_MODE:  ${INGEST_MODE:-buffered}
+      DB_DRIVER:    ${DB_DRIVER:-async}
       DB_HOST:      db
       DB_PORT:      3306
       DB_NAME:      logservice

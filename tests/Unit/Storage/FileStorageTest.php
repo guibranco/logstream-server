@@ -88,6 +88,30 @@ final class FileStorageTest extends TestCase
     // ──────────────────────────────────────────────────────────────────────────
 
     #[Test]
+    public function save_many_appends_every_entry_to_its_own_day_file(): void
+    {
+        $this->storage->saveMany([
+            $this->makeEntry('01AAA', timestamp: '2024-03-01T10:00:00.000Z'),
+            $this->makeEntry('01AAB', timestamp: '2024-03-02T10:00:00.000Z'),
+            $this->makeEntry('01AAC', timestamp: '2024-03-01T11:00:00.000Z'),
+        ]);
+
+        $day1 = file("{$this->tmpDir}/2024/03/01.jsonl", FILE_IGNORE_NEW_LINES);
+        $day2 = file("{$this->tmpDir}/2024/03/02.jsonl", FILE_IGNORE_NEW_LINES);
+
+        self::assertSame(['01AAA', '01AAC'], array_map(fn($l) => json_decode($l, true)['id'], $day1));
+        self::assertSame(['01AAB'], array_map(fn($l) => json_decode($l, true)['id'], $day2));
+    }
+
+    #[Test]
+    public function save_many_with_no_entries_writes_nothing(): void
+    {
+        $this->storage->saveMany([]);
+
+        self::assertSame(['.', '..'], scandir($this->tmpDir));
+    }
+
+    #[Test]
     public function it_finds_an_entry_by_id(): void
     {
         $entry = $this->makeEntry('01FINDME');
