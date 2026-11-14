@@ -87,7 +87,8 @@ WS_PORT=8080
 # Write key — used by your applications to POST logs
 API_SECRET=<generate-a-strong-secret>
 
-# Read key — used by the UI and authorised humans to view logs
+# UI key — used by the UI and authorised humans to view logs and manage
+# retention policies and clients (not read-only: keep it private)
 UI_SECRET=<generate-another-strong-secret>
 
 # Storage backend
@@ -494,7 +495,7 @@ Add these to your `.env` file (or pass them directly to `docker compose`):
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `API_SECRET` | ✅ | Write key for `POST /api/logs` |
-| `UI_SECRET` | ✅ | Read key for `GET /api/logs` and WebSocket |
+| `UI_SECRET` | ✅ | UI key: `GET /api/logs`, WebSocket, and retention and client management (`/api/retention/*`, `/api/clients/*`) |
 | `API_SECRET_PREFIX` | — | Prefix for new API secrets from `bin/generate-secret.php` (default `lsa_`) |
 | `UI_SECRET_PREFIX` | — | Prefix for new UI secrets from `bin/generate-secret.php` (default `lsu_`) |
 | `APP_TOKEN_PREFIX` | — | Prefix for application tokens created or rotated via `/api/clients` (default `lss_`) |

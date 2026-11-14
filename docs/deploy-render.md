@@ -102,7 +102,7 @@ the `UI_SECRET`; the UI adds it.
 | Variable | Default in image | Notes |
 |----------|------------------|-------|
 | `API_SECRET` | — | **Required.** Write key |
-| `UI_SECRET` | — | **Required.** Read key (UI + WebSocket) |
+| `UI_SECRET` | — | **Required.** UI key: reads (UI + WebSocket) and retention / client management |
 | `PORT` | `10000` | Set by Render; Caddy listens here |
 | `HTTP_PORT` / `WS_PORT` | `8081` / `8080` | Internal only; must differ from `PORT` |
 | `STORAGE_TYPE` | `file` | `mariadb` also works with the `DB_*` variables |

@@ -147,7 +147,8 @@ WS_PORT=8080
 # Write key — used by your applications to POST logs
 API_SECRET=<generate-a-strong-secret>
 
-# Read key — used by the UI and authorised humans to view logs
+# UI key — used by the UI and authorised humans to view logs and manage
+# retention policies and clients (not read-only: keep it private)
 UI_SECRET=<generate-another-strong-secret>
 
 # Storage: "file" needs no extra setup; "mariadb" requires the DB section below
