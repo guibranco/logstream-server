@@ -3,6 +3,38 @@
 
 ---
 
+## Live demo
+
+A public demo runs on Render's free plan, with file storage:
+
+| | |
+|---|---|
+| **Server** | <https://logstream-demo.onrender.com> (API docs at the root, health at `/api/health`) |
+| **UI** | [Open the demo, already connected](https://guilherme.stracini.com.br/logstream-ui/#server=https%3A%2F%2Flogstream-demo.onrender.com&secret=lsu_Cj4qmrHvWkH3BfMyUn4HELyBsldiprEGZfB0VAOR2S0) |
+| **`API_SECRET`** (write) | `lsa_fFWu1hWJ19kr_1g9maLswqk4tNCh-24qhv8s2eSMbVs` |
+| **`UI_SECRET`** (read) | `lsu_Cj4qmrHvWkH3BfMyUn4HELyBsldiprEGZfB0VAOR2S0` |
+
+Send a log entry:
+
+```bash
+curl -X POST https://logstream-demo.onrender.com/api/logs \
+  -H "Authorization: Bearer lsa_fFWu1hWJ19kr_1g9maLswqk4tNCh-24qhv8s2eSMbVs" \
+  -H "Content-Type: application/json" \
+  -d '{"app_key":"demo","app_id":"readme","level":"info","category":"test","message":"Hello from the README"}'
+```
+
+Then open the UI with the [demo link](https://guilherme.stracini.com.br/logstream-ui/#server=https%3A%2F%2Flogstream-demo.onrender.com&secret=lsu_Cj4qmrHvWkH3BfMyUn4HELyBsldiprEGZfB0VAOR2S0): the settings screen opens pre-filled with the server and
+the `UI_SECRET`, so just click **Validate and Connect**. To set it up by hand instead, open
+<https://guilherme.stracini.com.br/logstream-ui/> and, in **Settings**, use `https://logstream-demo.onrender.com`
+as the API URL, `wss://logstream-demo.onrender.com/ws` as the WebSocket URL and the `UI_SECRET` above.
+
+> ⚠️ **Demo only.** The service spins down after 15 minutes without traffic, and the first request after
+> that takes about a minute to wake it. Storage is not persistent: logs are lost on every redeploy, restart
+> or spin-down, and the demo retention deletes entries older than 1 day. The keys are public — **don't send
+> real or personal data**. How it is deployed: [`docs/deploy-render.md`](docs/deploy-render.md).
+
+---
+
 ## Architecture
 
 ```
