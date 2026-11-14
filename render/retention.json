@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "interval_hours": 1,
+  "policies": [
+    {
+      "name": "demo-remove-all-1d",
+      "older_than_days": 1
+    }
+  ]
+}
