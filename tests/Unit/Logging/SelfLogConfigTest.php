@@ -19,6 +19,14 @@ final class SelfLogConfigTest extends TestCase
         self::assertTrue($config->enabled);
         self::assertSame('info', $config->minLevel);
         self::assertSame(substr(gethostname() ?: 'default', 0, 100), $config->appId);
+        self::assertTrue($config->httpErrors);
+    }
+
+    #[Test]
+    #[DataProvider('booleans')]
+    public function reads_self_log_http_errors(string $raw, bool $expected): void
+    {
+        self::assertSame($expected, SelfLogConfig::fromEnv(['SELF_LOG_HTTP_ERRORS' => $raw])->httpErrors);
     }
 
     /** @return iterable<string, array{string, bool}> */

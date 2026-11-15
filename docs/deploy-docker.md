@@ -511,6 +511,7 @@ Add these to your `.env` file (or pass them directly to `docker compose`):
 | `SELF_LOG_ENABLED` | ❌ | Store the server's own messages (startup, PHP deprecations/warnings/errors, ingest problems) as the app `logstream-server` (default: `true`) |
 | `SELF_LOG_LEVEL` | ❌ | Lowest level of those stored (default: `info`) |
 | `SELF_LOG_APP_ID` | ❌ | `app_id` of those entries (default: the container's host name) |
+| `SELF_LOG_HTTP_ERRORS` | ❌ | Log every failed request — 4XX as `warning`, 5XX as `error`, category `http` (default: `true`) |
 
 ---
 

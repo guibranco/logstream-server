@@ -17,6 +17,7 @@ use LogService\Auth\SecretGenerator;
 use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Database\Connection;
 use LogService\Http\ClientIpResolver;
+use LogService\Http\FailedRequestLogger;
 use LogService\Http\Router;
 use LogService\Ingest\AsyncMysqlBatchWriter;
 use LogService\Ingest\IngestBuffer;
@@ -240,6 +241,9 @@ if ($selfLogConfig->enabled) {
 } else {
     $logger->info('selflog', 'Disabled (SELF_LOG_ENABLED=false)');
 }
+$logger->info('http', $selfLogConfig->httpErrors
+    ? 'Failed requests (4XX/5XX) are logged'
+    : 'Failed requests are not logged (SELF_LOG_HTTP_ERRORS=false)');
 
 if ($demoMode) {
     $logger->warning('demo', 'DEMO_MODE is on: /demo and /api/demo/run accept fake traffic without a key');
@@ -278,15 +282,18 @@ $router = new Router(
 // own body buffer capped at 64 KiB, which silently empties any larger body
 // before the 4 MiB buffer below ever runs (big batches → "Invalid JSON body").
 // With streaming on, HttpServer adds no concurrency limit either, so set one.
-$httpServer = new HttpServer(
+// FailedRequestLogger (SELF_LOG_HTTP_ERRORS, on by default) writes every 4XX/5XX
+// response to the server's own log under the category "http".
+$httpServer = new HttpServer(...array_values(array_filter([
     new StreamingRequestMiddleware(),
     new LimitConcurrentRequestsMiddleware(100),
+    $selfLogConfig->httpErrors ? new FailedRequestLogger($logger->channel('http'), $ipResolver) : null,
     new RequestBodyBufferMiddleware(4 * 1024 * 1024),
     new RequestBodyParserMiddleware(),
     function ($request) use ($router) {
         return $router->handle($request);
     },
-);
+])));
 
 $httpSocket = new SocketServer("0.0.0.0:{$httpPort}", [], $loop);
 $httpServer->listen($httpSocket);
@@ -320,6 +327,7 @@ $logger->info('startup', "LogStream server {$appVersion} started", [
     'read_key_set' => !empty($uiSecret),
     'ingest_mode'  => $ingestConfig->mode,
     'retention'    => $retentionRunner !== null,
+    'http_errors'  => $selfLogConfig->httpErrors,
 ]);
 
 // ─── Retention periodic timer ─────────────────────────────────────────────────

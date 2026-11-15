@@ -378,10 +378,16 @@ The server stores its own messages as log entries of the application
 | `php.exception`, `php.fatal` | Uncaught exceptions and fatal errors (`critical`), written straight to storage before the process exits |
 | `ingest` | Failed flushes (`warning`) and dropped entries (`error`) |
 | `retention`, `http`, `shutdown` | Scheduled retention runs, HTTP server errors, graceful shutdown |
+| `http` | Every failed request: 4XX as `warning`, 5XX as `error` (`SELF_LOG_HTTP_ERRORS`) |
 
 PHP errors carry `php_error`, `file` and `line` in `context`; an identical one
 is stored at most once every five minutes, with `repeated` counting the ones in
-between. Every entry of one server process shares a `trace_id`, so a whole run
+between. Failed requests carry `method`, `path`, `status`, `duration_ms`,
+`client_ip`, `user_agent`, `app_key` (the `X-Api-Key`, never a token or the
+`Authorization` header) and the response's `error`, `reason` and first
+`errors`; the query string and body are not logged. An exception thrown while
+handling a request is logged with its class, file and line and answered with
+a JSON 500. Every entry of one server process shares a `trace_id`, so a whole run
 from boot to shutdown can be pulled up by trace. `app_id` is the host name
 unless `SELF_LOG_APP_ID` is set, and `user_agent` is
 `LogStream-Server/<version> (PHP <version>; <OS>)`.
@@ -393,6 +399,7 @@ deprecations. The console output is unchanged.
 SELF_LOG_ENABLED=true     # false: print to the console only, store nothing
 SELF_LOG_LEVEL=info       # lowest level stored
 SELF_LOG_APP_ID=          # default: host name
+SELF_LOG_HTTP_ERRORS=true # false: do not log failed (4XX/5XX) requests
 ```
 
 `logstream-server` is reserved whether self-logging is on or off: it has no
