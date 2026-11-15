@@ -21,6 +21,7 @@ services:
       DB_DRIVER:    ${DB_DRIVER:-async}
       SELF_LOG_ENABLED: ${SELF_LOG_ENABLED:-true}
       SELF_LOG_LEVEL:   ${SELF_LOG_LEVEL:-info}
+      SELF_LOG_HTTP_ERRORS: ${SELF_LOG_HTTP_ERRORS:-true}
       DB_HOST:      db
       DB_PORT:      3306
       DB_NAME:      logservice

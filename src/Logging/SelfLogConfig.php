@@ -21,6 +21,10 @@ use LogService\Models\LogEntry;
  *   SELF_LOG_APP_ID=<hostname> (default)
  *     The entries' app_id, to tell several instances apart.
  *
+ *   SELF_LOG_HTTP_ERRORS=true (default) | false
+ *     Log every failed HTTP request (4XX as "warning", 5XX as "error") under
+ *     the category "http". See {@see \LogService\Http\FailedRequestLogger}.
+ *
  * The app_key "logstream-server" is reserved whether or not self-logging is
  * enabled: it has no row in the clients table, no client can be registered
  * with it and POST /api/logs rejects entries that use it.
@@ -36,6 +40,7 @@ final class SelfLogConfig
         public readonly bool   $enabled  = true,
         public readonly string $minLevel = 'info',
         public readonly string $appId    = 'default',
+        public readonly bool   $httpErrors = true,
     ) {
         if (!in_array($minLevel, LogEntry::LEVELS, true)) {
             throw new \InvalidArgumentException(sprintf(
@@ -61,6 +66,7 @@ final class SelfLogConfig
             enabled:  self::bool($env, 'SELF_LOG_ENABLED', true),
             minLevel: strtolower(trim((string) ($env['SELF_LOG_LEVEL'] ?? '') ?: 'info')),
             appId:    $appId,
+            httpErrors: self::bool($env, 'SELF_LOG_HTTP_ERRORS', true),
         );
     }
 
