@@ -170,28 +170,7 @@ final class FailedRequestLogger
      */
     private function errorDetails(ResponseInterface $response): array
     {
-        if (!str_contains(strtolower($response->getHeaderLine('Content-Type')), 'json')) {
-            return [];
-        }
-
-        $body = $response->getBody();
-        $size = $body->getSize();
-        if ($size === null || $size === 0 || $size > self::MAX_BODY_BYTES || !$body->isSeekable()) {
-            return [];
-        }
-
-        try {
-            $body->rewind();
-            $raw = $body->getContents();
-            $body->rewind();
-        } catch (\Throwable) {
-            return [];
-        }
-
-        $data = json_decode($raw, true);
-        if (!is_array($data)) {
-            return [];
-        }
+        $data = self::readJsonBody($response);
 
         $details = [];
         foreach (['error', 'reason'] as $field) {
@@ -199,19 +178,47 @@ final class FailedRequestLogger
                 $details[$field] = self::clip($data[$field]);
             }
         }
-        if (is_array($data['errors'] ?? null) && $data['errors'] !== []) {
-            $errors = array_values(array_filter($data['errors'], 'is_string'));
-            $details['errors'] = array_map(self::clip(...), array_slice($errors, 0, self::MAX_ERRORS));
-            if (count($data['errors']) > self::MAX_ERRORS) {
-                $details['errors_total'] = count($data['errors']);
+
+        $errors = is_array($data['errors'] ?? null) ? $data['errors'] : [];
+        $strings = array_slice(array_values(array_filter($errors, 'is_string')), 0, self::MAX_ERRORS);
+        if ($strings !== []) {
+            $details['errors'] = array_map(self::clip(...), $strings);
+            if (count($errors) > self::MAX_ERRORS) {
+                $details['errors_total'] = count($errors);
             }
             // A batch rejected entry by entry has no "error": say what went wrong.
-            if (!isset($details['error']) && $details['errors'] !== []) {
-                $details['error'] = $details['errors'][0];
-            }
+            $details['error'] ??= $details['errors'][0];
         }
 
         return $details;
+    }
+
+    /**
+     * The decoded body of a small, seekable JSON response; [] for anything else.
+     * The body is rewound afterwards so it is still sent in full.
+     *
+     * @return array<mixed>
+     */
+    private static function readJsonBody(ResponseInterface $response): array
+    {
+        $body = $response->getBody();
+        $size = $body->getSize();
+        $readable = str_contains(strtolower($response->getHeaderLine('Content-Type')), 'json')
+            && $size !== null && $size > 0 && $size <= self::MAX_BODY_BYTES
+            && $body->isSeekable();
+
+        $data = null;
+        if ($readable) {
+            try {
+                $body->rewind();
+                $data = json_decode($body->getContents(), true);
+                $body->rewind();
+            } catch (\Throwable) {
+                $data = null;
+            }
+        }
+
+        return is_array($data) ? $data : [];
     }
 
     private static function clip(string $value): string
