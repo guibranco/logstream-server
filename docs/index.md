@@ -155,6 +155,18 @@ Send multiple entries in one request by placing them in a `logs` array. Fields s
 }
 ```
 
+#### Bare arrays
+
+Fluent Bit, Vector and similar tools send a plain JSON array. It is accepted as a batch; since there is no top level, pass `app_id` (and, in file mode, `app_key`) as the `X-App-Id` / `X-App-Key` headers:
+```
+X-App-Id: vinhedo-3
+
+[
+  { "level": "error",   "category": "nginx-access", "message": "GET /api/repos 502" },
+  { "level": "warning", "category": "nginx-access", "message": "GET /favicon.ico 404" }
+]
+```
+
 ### Search parameters
 
 `GET /api/logs` accepts the following query parameters:

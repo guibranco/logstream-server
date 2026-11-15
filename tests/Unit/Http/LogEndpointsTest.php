@@ -315,6 +315,82 @@ final class LogEndpointsTest extends TestCase
     }
 
     #[Test]
+    public function ingest_accepts_a_bare_array_as_a_batch_with_app_fields_from_headers(): void
+    {
+        $captured = [];
+        $storage  = $this->createMock(StorageInterface::class);
+        $storage->expects(self::exactly(2))->method('save')->willReturnCallback(
+            function (LogEntry $e) use (&$captured): void { $captured[] = $e; },
+        );
+
+        $request = (new ServerRequest('POST', 'http://localhost/api/logs'))
+            ->withHeader('Authorization', 'Bearer write-secret')
+            ->withHeader('X-App-Key', 'nginx')
+            ->withHeader('X-App-Id', 'vinhedo-3')
+            ->withBody(Utils::streamFor(json_encode([
+                ['level' => 'error', 'category' => 'nginx-access', 'message' => 'GET /api 502'],
+                ['level' => 'warning', 'category' => 'nginx-access', 'message' => 'GET /x 404', 'app_id' => 'vinhedo-4'],
+            ])));
+
+        $response = $this->makeRouter($storage, new SingleKeyWriteAuth('write-secret'))->handle($request);
+        $body     = json_decode((string) $response->getBody(), true);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame(2, $body['saved']);
+        self::assertSame('nginx', $captured[0]->appKey);
+        self::assertSame('vinhedo-3', $captured[0]->appId);
+        self::assertSame('vinhedo-4', $captured[1]->appId);
+    }
+
+    #[Test]
+    public function ingest_uses_the_authenticated_client_for_a_bare_array_in_db_mode(): void
+    {
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::exactly(2))->method('save')->with(
+            self::callback(fn(LogEntry $e) => $e->appKey === 'nginx' && $e->appId === 'vinhedo-1'),
+        );
+
+        $writeAuth = $this->createStub(WriteAuthInterface::class);
+        $writeAuth->method('authenticate')->willReturn(AuthResult::success('nginx'));
+
+        $request = (new ServerRequest('POST', 'http://localhost/api/logs'))
+            ->withHeader('X-App-Id', 'vinhedo-1')
+            ->withBody(Utils::streamFor(json_encode([
+                ['message' => 'first'],
+                ['message' => 'second', 'app_key' => 'ignored-because-db-mode'],
+            ])));
+
+        $response = $this->makeRouter($storage, $writeAuth)->handle($request);
+
+        self::assertSame(201, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function ingest_rejects_a_bare_array_without_an_app_id_header(): void
+    {
+        $request = (new ServerRequest('POST', 'http://localhost/api/logs'))
+            ->withHeader('X-App-Key', 'nginx')
+            ->withBody(Utils::streamFor(json_encode([['message' => 'first']])));
+
+        $response = $this->makeRouter()->handle($request);
+
+        self::assertSame(400, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function ingest_returns_400_for_an_empty_bare_array(): void
+    {
+        $request = (new ServerRequest('POST', 'http://localhost/api/logs'))
+            ->withHeader('X-App-Key', 'nginx')
+            ->withHeader('X-App-Id', 'vinhedo-1')
+            ->withBody(Utils::streamFor('[]'));
+
+        $response = $this->makeRouter()->handle($request);
+
+        self::assertSame(400, $response->getStatusCode());
+    }
+
+    #[Test]
     public function ingest_reports_per_entry_errors_without_failing_the_whole_batch(): void
     {
         $storage = $this->createMock(StorageInterface::class);

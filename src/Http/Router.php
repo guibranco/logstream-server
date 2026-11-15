@@ -505,9 +505,13 @@ final class Router
             return $this->json(['error' => 'app_key and app_id are required'], 400, $cors);
         }
 
-        $rawLogs = isset($body['logs']) && is_array($body['logs'])
-            ? $body['logs']
-            : [$body];
+        // A bare JSON array is a batch too (Fluent Bit, Vector and other log
+        // shippers send one); its app_key/app_id then come from the headers.
+        $rawLogs = match (true) {
+            array_is_list($body)                            => $body,
+            isset($body['logs']) && is_array($body['logs']) => $body['logs'],
+            default                                         => [$body],
+        };
 
         [$entries, $errors] = $this->buildEntries(
             $rawLogs, $isSingleKey, $defaultAppKey, $resolvedAppKey,

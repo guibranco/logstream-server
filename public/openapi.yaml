@@ -903,6 +903,18 @@ components:
           items:
             $ref: '#/components/schemas/IngestEntry'
 
+    ArrayIngestRequest:
+      type: array
+      minItems: 1
+      description: |
+        A bare JSON array of entries, as sent by log shippers such as
+        Fluent Bit or Vector. There is no top level, so `app_key` (file mode
+        only) and `app_id` come from the `X-App-Key` / `X-App-Id` headers,
+        unless an entry sets them itself. Without an `app_id` header the
+        request is rejected with 400.
+      items:
+        $ref: '#/components/schemas/IngestEntry'
+
     IngestResponse:
       type: object
       required: [saved, entries]
@@ -1405,6 +1417,26 @@ paths:
           schema:
             type: string
             enum: [return=representation, return=minimal]
+        - name: X-App-Id
+          in: header
+          required: false
+          description: |
+            Default `app_id` when the body has none at the top level, as with a
+            bare JSON array. A top-level `app_id` in the body takes precedence.
+          schema:
+            type: string
+            maxLength: 100
+          example: vinhedo-3
+        - name: X-App-Key
+          in: header
+          required: false
+          description: |
+            File storage mode only: default `app_key` when the body has none at
+            the top level. Ignored in MariaDB mode, where the client's
+            `X-Api-Key` decides the `app_key`.
+          schema:
+            type: string
+            maxLength: 100
       security:
         - WriteKey: []
         - ApiKey: []
@@ -1417,6 +1449,7 @@ paths:
               oneOf:
                 - $ref: '#/components/schemas/SingleIngestRequest'
                 - $ref: '#/components/schemas/BatchIngestRequest'
+                - $ref: '#/components/schemas/ArrayIngestRequest'
             examples:
               singleFileMode:
                 summary: "Single entry — file storage mode"
@@ -1459,6 +1492,15 @@ paths:
                     - level: warning
                       category: payments
                       message: Retry scheduled
+              array:
+                summary: "Bare array — app_key/app_id from X-App-Key / X-App-Id"
+                value:
+                  - level: error
+                    category: nginx-access
+                    message: GET /api/repos 502
+                  - level: warning
+                    category: nginx-access
+                    message: GET /favicon.ico 404
       responses:
         "201":
           description: |
