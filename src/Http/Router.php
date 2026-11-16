@@ -123,6 +123,10 @@ final class Router
             return $this->serveFile(__DIR__ . '/../../public/favicon.ico', 'image/x-icon');
         }
 
+        if ($method === 'GET' && ($path === '/logo.svg' || $path === '/favicon.svg')) {
+            return $this->serveFile(__DIR__ . '/../../public/logo.svg', 'image/svg+xml');
+        }
+
         if ($method === 'GET' && $path === '/openapi.yaml') {
             return $this->serveTemplate(__DIR__ . '/../../public/openapi.yaml', 'application/yaml');
         }
