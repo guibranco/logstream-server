@@ -46,14 +46,15 @@ gateway timeout…). Both only exist with `DEMO_MODE=true`; see [demo data](docs
 ## Architecture
 
 ```
-[ Your apps ]  ──POST /api/logs──▶  [ HTTP server :8081 ]
-                                            │
-                                       saves to storage
-                                       (MariaDB / JSONL)
-                                            │
-                                       broadcasts via
-                                            ▼
-                                  [ WS server :8080 ]  ──▶  [ React UI ]
+[ Your apps ]  ──POST /api/logs──▶  [ HTTP server :8081/tcp ] ─┐
+[ Your apps ]  ──signed packets──▶  [ UDP ingest  :8082/udp ] ─┤
+                                                               │
+                                                saves to storage
+                                                (MariaDB / JSONL)
+                                                               │
+                                                broadcasts via
+                                                               ▼
+                                             [ WS server :8080 ]  ──▶  [ React UI ]
 ```
 
 ---
@@ -529,11 +530,110 @@ next one fires only after the client has sent again and gone silent again:
 Which clients were already alerted is kept in memory, so a client still
 silent when the server restarts is reported once more.
 
+### UDP ingestion
+
+For high-frequency logging, `POST /api/logs` costs a TCP handshake, TLS and
+HTTP parsing per call. The server can also take **HMAC-signed log packets over
+UDP** (`UDP_PORT`, default `8082/udp`) — one entry per datagram, fire and
+forget. Packets go through the same pipeline as HTTP (validation, message
+templates, ingest buffer, WebSocket feed, client last-seen, retention).
+
+```json
+{
+  "v":     1,
+  "key":   "billing-api",
+  "ts":    1748000000000,
+  "nonce": "9f2c4e1ab37d5c60",
+  "sig":   "<hex HMAC-SHA256>",
+  "log":   { "app_id": "production", "level": "info", "category": "payments",
+             "message": "Charge processed", "context": { "invoice_id": 1234 } }
+}
+```
+
+| Field | |
+|---|---|
+| `v` | Protocol version, `1` |
+| `key` | The app_key. MariaDB: a registered client; file mode: any name except `logstream-server` |
+| `ts` | Unix time in **milliseconds**; must be within `UDP_TIMESTAMP_WINDOW_MS` (±30 s) of the server — keep clocks NTP-synced |
+| `nonce` | 16–64 characters of `A-Z a-z 0-9 _ -`, unique per packet (e.g. 8 random bytes as hex) |
+| `sig` | `hex(HMAC-SHA256(secret, "{key}:{ts}:{nonce}:{log JSON}"))` |
+| `log` | One entry, as in `POST /api/logs`: `app_id` (required), `level`, `category`, `message` or `message_template` + `context`, `trace_id`, `batch_id`, `user_agent`, `timestamp` |
+
+The **secret** is the client's `api_token` (MariaDB) or `API_SECRET` (file
+mode; UDP rejects everything while it is empty). It never travels on the wire.
+The **log JSON** in the signature is the `log` object exactly as you put it in
+the packet: compact (no spaces), slashes and non-ASCII characters not escaped
+(PHP: `JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES`; Python:
+`json.dumps(log, separators=(",", ":"), ensure_ascii=False)`).
+
+The server **never replies**. A packet that is too large, malformed, stale,
+replayed, unsigned or for an unknown/inactive client is dropped and counted in
+`GET /api/health` (`udp.rejected`), and summarised in the server's own log at
+most once a minute per reason. Deactivating a client or rotating its token
+applies to UDP immediately.
+
+```php
+// PHP — no dependencies
+function sendUdpLog(string $host, int $port, string $appKey, string $secret, array $log): void
+{
+    $flags   = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES;
+    $ts      = (int) (microtime(true) * 1000);
+    $nonce   = bin2hex(random_bytes(8));
+    $logJson = json_encode($log, $flags);
+    $sig     = hash_hmac('sha256', "{$appKey}:{$ts}:{$nonce}:{$logJson}", $secret);
+    $packet  = json_encode(['v' => 1, 'key' => $appKey, 'ts' => $ts, 'nonce' => $nonce, 'sig' => $sig, 'log' => $log], $flags);
+
+    $socket = socket_create(AF_INET, SOCK_DGRAM, SOL_UDP);
+    socket_sendto($socket, $packet, strlen($packet), 0, $host, $port);
+    socket_close($socket);
+}
+
+sendUdpLog('logs.example.com', 8082, 'billing-api', 'lss_…', [
+    'app_id' => 'production', 'level' => 'info', 'message' => 'Charge processed',
+]);
+```
+
+```bash
+# Shell (testing)
+KEY=billing-api; SECRET=lss_…
+TS=$(date +%s%3N); NONCE=$(head -c8 /dev/urandom | xxd -p)
+LOG='{"app_id":"test","level":"info","message":"hello udp"}'
+SIG=$(printf '%s' "${KEY}:${TS}:${NONCE}:${LOG}" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $NF}')
+printf '{"v":1,"key":"%s","ts":%s,"nonce":"%s","sig":"%s","log":%s}' "$KEY" "$TS" "$NONCE" "$SIG" "$LOG" \
+  | nc -u -w1 127.0.0.1 8082
+```
+
+| Variable | Default | |
+|---|---|---|
+| `UDP_ENABLED` | `true` | Start the UDP listener |
+| `UDP_HOST` / `UDP_PORT` | `0.0.0.0` / `8082` | Bind address; the port must differ from `HTTP_PORT` and `WS_PORT` |
+| `UDP_MAX_PACKET_SIZE` | `8192` | Larger packets are dropped (max 65507; stay under ~1400 bytes across the internet to avoid fragmentation) |
+| `UDP_TIMESTAMP_WINDOW_MS` | `30000` | Accepted clock skew |
+| `UDP_NONCE_TTL_S` | `60` | How long nonces are remembered; must be at least 2 × the window |
+| `UDP_NONCE_CACHE_MAX` | `200000` | Memory guard on remembered nonces (~100 B each) |
+| `UDP_ALLOWED_SOURCES` | *(any)* | Comma-separated IPs / CIDR ranges allowed to send |
+
+Batching (`INGEST_MODE`, `INGEST_BATCH_SIZE`, `INGEST_FLUSH_INTERVAL_MS`,
+`INGEST_BUFFER_CAPACITY`) applies to UDP entries too; when the buffer is full,
+packets are dropped and counted (`udp.dropped`).
+
+**Security.** UDP has no TLS: the content of each packet is readable in
+transit (the secret is not — only the signature is sent). Restrict who can
+send with `UDP_ALLOWED_SOURCES` and your firewall, and across the internet
+prefer a private network or VPN (e.g. WireGuard). The signature, timestamp
+window and per-key nonces stop forged, altered and replayed packets.
+
+**Hosting.** UDP needs a host where you control the ports: a VM, a VPS or
+Docker (`8082:8082/udp`). Nginx does not proxy it — clients send straight to
+the server. PaaS hosts such as Render accept only HTTP(S), so UDP is off in the
+Render blueprint.
+
 ### Testing
 
 ```bash
 composer test:unit                 # no external services
 composer test:integration          # file storage always; MariaDB when configured
+tests/udp-tests.sh http://localhost:8081 127.0.0.1 8082 udp-ci <API_SECRET> <UI_SECRET>   # live server
 ```
 
 The MariaDB integration tests run only when `TEST_DB_DSN` is set, and they

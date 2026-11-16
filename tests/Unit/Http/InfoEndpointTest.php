@@ -139,4 +139,49 @@ final class InfoEndpointTest extends TestCase
 
         self::assertNotEmpty($response->getHeaderLine('Access-Control-Allow-Origin'));
     }
+
+    #[Test]
+    public function reports_udp_disabled_without_a_udp_server(): void
+    {
+        $body = json_decode((string) $this->makeRouter()->handle(new ServerRequest('GET', 'http://localhost/api/info'))->getBody(), true);
+
+        self::assertFalse($body['features']['udp_ingest']);
+        self::assertSame(['enabled' => false], $body['udp']);
+    }
+
+    #[Test]
+    public function reports_udp_settings_and_health_counters(): void
+    {
+        $config    = \LogService\Udp\UdpConfig::fromEnv(['UDP_PORT' => '9999', 'UDP_MAX_PACKET_SIZE' => '1400']);
+        $udpServer = new \LogService\Udp\UdpLogServer(
+            new \LogService\Udp\UdpPacketValidator(fn(): ?string => null),
+            new \LogService\Ingest\EntrySink($this->createStub(\LogService\Storage\StorageInterface::class), new LogHub('')),
+        );
+        $udpServer->handle('garbage', '10.0.0.1:5');
+
+        $router = new Router(
+            storage:     $this->createStub(\LogService\Storage\StorageInterface::class),
+            hub:         new LogHub(''),
+            writeAuth:   new SingleKeyWriteAuth('test-secret'),
+            uiSecret:    'test-ui-secret',
+            storageType: 'file',
+            udpServer:   $udpServer,
+            udpConfig:   $config,
+        );
+
+        $info = json_decode((string) $router->handle(new ServerRequest('GET', 'http://localhost/api/info'))->getBody(), true);
+        self::assertTrue($info['features']['udp_ingest']);
+        self::assertSame([
+            'enabled'             => true,
+            'port'                => 9999,
+            'protocol_version'    => 1,
+            'max_packet_size'     => 1400,
+            'timestamp_window_ms' => 30000,
+        ], $info['udp']);
+
+        $health = json_decode((string) $router->handle(new ServerRequest('GET', 'http://localhost/api/health'))->getBody(), true);
+        self::assertFalse($health['udp']['listening']);
+        self::assertSame(1, $health['udp']['received']);
+        self::assertSame(['invalid_json' => 1], $health['udp']['rejected']);
+    }
 }

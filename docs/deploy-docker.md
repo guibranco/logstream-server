@@ -143,6 +143,10 @@ Verify the health endpoint:
 curl -s http://localhost:8081/api/health | python3 -m json.tool
 ```
 
+The quick-start compose file also publishes UDP ingest on `8082/udp`; test it
+with `tests/udp-tests.sh http://localhost:8081 127.0.0.1 8082 udp-test <API_SECRET> <UI_SECRET>`
+(file storage) — see the README's *UDP ingestion* section.
+
 ---
 
 ## 5. Production setup with HTTPS (Nginx + Certbot)
@@ -199,6 +203,10 @@ services:
     expose:
       - "8081"
       - "8080"
+    # UDP ingest is not proxied by Nginx: publish it directly (remove if unused,
+    # and set UDP_ENABLED=false). Restrict senders with UDP_ALLOWED_SOURCES / firewall.
+    ports:
+      - "8082:8082/udp"
 
   # ── MariaDB ──────────────────────────────────────────────────────────────────
   db:
@@ -506,6 +514,9 @@ Add these to your `.env` file (or pass them directly to `docker compose`):
 | `DB_USER` | ❌ | Database user (default: `logservice`) |
 | `HTTP_PORT` | ❌ | Internal HTTP port (default: `8081`) |
 | `WS_PORT` | ❌ | Internal WebSocket port (default: `8080`) |
+| `UDP_ENABLED` | ❌ | HMAC-signed log packets over UDP (default: `true`); publish the port with `8082:8082/udp` |
+| `UDP_PORT` | ❌ | UDP ingest port (default: `8082`) |
+| `UDP_ALLOWED_SOURCES` | ❌ | Comma-separated IPs/CIDRs allowed to send UDP packets (default: any). With Docker's userland proxy the source may appear as the bridge gateway — restrict at the host firewall instead |
 | `LOG_PATH` | ❌ | Log path when using file storage (default: `./storage/logs`) |
 | `TRUSTED_PROXIES` | ❌ | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` is trusted for `sender_ip` (e.g. `172.16.0.0/12` for the Nginx container) |
 | `SELF_LOG_ENABLED` | ❌ | Store the server's own messages (startup, PHP deprecations/warnings/errors, ingest problems) as the app `logstream-server` (default: `true`) |

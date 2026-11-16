@@ -8,9 +8,12 @@ services:
     ports:
       - "8081:8081"   # HTTP API
       - "8080:8080"   # WebSocket
+      - "8082:8082/udp" # UDP ingest (HMAC-signed packets)
     environment:
       HTTP_PORT:    8081
       WS_PORT:      8080
+      UDP_ENABLED:  ${UDP_ENABLED:-true}
+      UDP_PORT:     8082
       API_SECRET:   ${API_SECRET:-test-secret}
       UI_SECRET:    ${UI_SECRET:-test-ui-secret}
       API_SECRET_PREFIX: ${API_SECRET_PREFIX-lsa_}

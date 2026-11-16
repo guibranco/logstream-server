@@ -44,6 +44,7 @@ RUN chmod +x render/entrypoint.sh
 
 # ── Runtime defaults (override in the host's environment settings) ────────────
 ENV PORT=10000 \
+    UDP_ENABLED=false \
     HTTP_PORT=8081 \
     WS_PORT=8080 \
     STORAGE_TYPE=file \

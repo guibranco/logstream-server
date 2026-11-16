@@ -182,6 +182,11 @@ jobs:
             exit 1
           fi
 
+      - name: 📡 Run UDP ingest tests
+        run: |
+          chmod +x tests/udp-tests.sh
+          tests/udp-tests.sh http://localhost:8081 127.0.0.1 8082 udp-ci test-secret test-ui-secret
+
       - name: 📋 Dump container logs on failure
         if: failure()
         run: docker compose logs --tail=100

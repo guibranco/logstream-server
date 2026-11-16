@@ -494,6 +494,23 @@ sudo ufw enable
 sudo ufw status verbose
 ```
 
+### UDP ingest (optional)
+
+UDP log packets (`UDP_ENABLED=true`, `UDP_PORT=8082`) go straight to the PHP
+server — Nginx does not proxy UDP. Open the port only to the hosts that send
+logs, and set the same ranges in `UDP_ALLOWED_SOURCES`:
+
+```bash
+sudo ufw allow from 203.0.113.0/24 to any port 8082 proto udp
+# or, on a private network / VPN only:
+sudo ufw allow in on wg0 to any port 8082 proto udp
+```
+
+On a cloud VM, also allow it in the provider's firewall — for OCI, add an
+ingress rule to the subnet's security list (or NSG): **protocol UDP**,
+destination port **8082**, source restricted to your clients' CIDR. If you do
+not use UDP, set `UDP_ENABLED=false`.
+
 ---
 
 ## 15. Final end-to-end verification

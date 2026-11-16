@@ -41,6 +41,12 @@ Caddy :$PORT (10000)
 The PHP server is unchanged, so the regular `Dockerfile` and the existing
 deployments are not affected.
 
+> **No UDP ingest on Render.** Render (like most PaaS hosts) accepts only
+> HTTP(S) from the internet, so the image and the blueprint set
+> `UDP_ENABLED=false`. Applications send logs with `POST /api/logs`. For UDP
+> ingestion, deploy on a VM or with Docker ([Ubuntu](deploy-ubuntu.md),
+> [Docker](deploy-docker.md)).
+
 ---
 
 ## Setup
