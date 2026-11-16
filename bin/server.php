@@ -16,6 +16,9 @@ use LogService\Auth\DatabaseWriteAuth;
 use LogService\Auth\SecretGenerator;
 use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Database\Connection;
+use LogService\Health\ClientActivityTracker;
+use LogService\Health\ClientSilenceMonitor;
+use LogService\Health\WebhookSilenceNotifier;
 use LogService\Http\ClientIpResolver;
 use LogService\Http\FailedRequestLogger;
 use LogService\Http\Router;
@@ -79,6 +82,7 @@ $logger->configure($selfLogConfig, $appVersion);
 
 $writeAuthDb      = null;
 $clientRepository = null;
+$clientActivity   = null;
 
 if ($storageType === 'mariadb') {
     $dsn  = sprintf(
@@ -107,6 +111,8 @@ if ($storageType === 'mariadb') {
         exit(1);
     }
     $clientRepository = new ClientRepository($appDb, $appTokens);
+    // last_seen_at: kept in memory on ingestion, written every few seconds.
+    $clientActivity   = new ClientActivityTracker($clientRepository, log: $logger->channel('clients'));
 
     $authMode = 'per-client (X-Api-Key / X-Api-Token  →  clients table)';
     $logger->info('storage', "MariaDB ({$_ENV['DB_HOST']}:{$_ENV['DB_PORT']}/{$_ENV['DB_NAME']})");
@@ -205,10 +211,12 @@ if ($ingestConfig->isBuffered()) {
         $batchWriter,
         $ingestConfig,
         // Broadcast only what is stored, so the live view never shows an entry search can't find.
-        static function (array $entries) use ($hub): void {
+        static function (array $entries) use ($hub, $clientActivity): void {
             foreach ($entries as $entry) {
                 $hub->broadcast($entry);
             }
+            // Only stored entries count as "seen" (self-log entries are skipped by the tracker).
+            $clientActivity?->touch(...array_map(static fn($entry) => $entry->appKey, $entries));
         },
         $logger->channel('ingest'),
     );
@@ -276,6 +284,7 @@ $router = new Router(
     ingestDbDriver:   $ingestConfig->dbDriver,
     selfLogging:      $selfLogConfig->enabled,
     demoMode:         $demoMode,
+    clientActivity:   $clientActivity,
 );
 
 // StreamingRequestMiddleware must come first: without it HttpServer prepends its
@@ -366,6 +375,36 @@ if ($retentionRunner !== null) {
     });
 }
 
+// ─── Client health ────────────────────────────────────────────────────────────
+// last_seen_at is flushed every few seconds. With CLIENT_SILENCE_WEBHOOK_URL
+// set, clients with a heartbeat timeout are checked every
+// CLIENT_HEALTH_CHECK_SECONDS (default 30) and a webhook fires when one goes silent.
+
+$silenceMonitor = null;
+
+if ($clientActivity !== null) {
+    $clientActivity->start($loop);
+
+    $silenceWebhook = trim((string) ($_ENV['CLIENT_SILENCE_WEBHOOK_URL'] ?? ''));
+    if ($silenceWebhook !== '') {
+        if (!WebhookSilenceNotifier::isValidUrl($silenceWebhook)) {
+            $logger->warning('clients', 'CLIENT_SILENCE_WEBHOOK_URL is not an http(s) URL — silence alerts are off.');
+        } else {
+            $checkSeconds   = max(5.0, (float) ($_ENV['CLIENT_HEALTH_CHECK_SECONDS'] ?? ClientSilenceMonitor::DEFAULT_INTERVAL_SECONDS));
+            $silenceMonitor = new ClientSilenceMonitor(
+                $clientRepository,
+                new WebhookSilenceNotifier($silenceWebhook),
+                $clientActivity,
+                log: $logger->channel('clients'),
+            );
+            $silenceMonitor->start($loop, $checkSeconds);
+            $logger->info('clients', "Silence alerts enabled — checked every {$checkSeconds}s");
+        }
+    } else {
+        $logger->info('clients', 'Silence alerts off (CLIENT_SILENCE_WEBHOOK_URL not set)');
+    }
+}
+
 // ─── Graceful shutdown ────────────────────────────────────────────────────────
 // On SIGTERM (systemctl stop/restart, docker stop) or SIGINT: stop accepting
 // connections, write what is still buffered, then exit. A second signal exits
@@ -374,7 +413,7 @@ if ($retentionRunner !== null) {
 if (function_exists('pcntl_signal')) {
     $shuttingDown = false;
     $shutdown = function (int $signal) use (
-        &$shuttingDown, $loop, $httpSocket, $wsSocket, $ingestBuffer, $asyncWriter, $ingestConfig, $logger
+        &$shuttingDown, $loop, $httpSocket, $wsSocket, $ingestBuffer, $asyncWriter, $ingestConfig, $logger, $clientActivity
     ): void {
         if ($shuttingDown) {
             $logger->log('warning', 'shutdown', 'Second signal — exiting now.', now: true);
@@ -385,8 +424,10 @@ if (function_exists('pcntl_signal')) {
 
         $httpSocket->close();
         $wsSocket->close();
+        $clientActivity?->stop($loop);
 
         if ($ingestBuffer === null) {
+            $clientActivity?->flush();
             $loop->stop();
             return;
         }
@@ -394,12 +435,13 @@ if (function_exists('pcntl_signal')) {
         $pending = $ingestBuffer->pending();
         $logger->info('shutdown', "Writing {$pending} buffered entries...");
         $ingestBuffer->drain($ingestConfig->shutdownTimeoutMs / 1000)->then(
-            function (bool $drained) use ($loop, $ingestBuffer, $asyncWriter, $logger): void {
+            function (bool $drained) use ($loop, $ingestBuffer, $asyncWriter, $logger, $clientActivity): void {
                 // The buffer no longer accepts entries: these are written directly.
                 $drained
                     ? $logger->info('shutdown', 'Buffer drained.')
                     : $logger->error('shutdown', 'Timed out — ' . $ingestBuffer->pending() . ' entries were not written.');
                 $asyncWriter?->quit();
+                $clientActivity?->flush();
                 $loop->stop();
             },
         );

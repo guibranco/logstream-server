@@ -236,6 +236,61 @@ components:
           type: string
           format: date-time
           example: "2025-01-15T09:00:00+00:00"
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: >
+            When entries from this client were last accepted (UTC). `null`
+            when it has never sent anything.
+          example: "2026-04-17T16:45:00+00:00"
+        heartbeat_timeout_min:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 43200
+          description: >
+            Silence threshold in minutes. `null` = health monitoring off
+            (the client is never `silent`).
+          example: 10
+        status:
+          $ref: '#/components/schemas/ClientHealthStatus'
+
+    ClientHealthStatus:
+      type: string
+      enum: [active, silent, never_seen]
+      description: |
+        Health of the client, from `last_seen_at` and `heartbeat_timeout_min`:
+        - `never_seen` — nothing ever received
+        - `silent` — nothing received for longer than `heartbeat_timeout_min`
+        - `active` — seen within the timeout, or seen and no timeout set
+
+        Independent of `active`, which is the enabled/disabled flag.
+      example: active
+
+    ClientHealth:
+      type: object
+      required: [app_key, status, last_seen, last_seen_ago, timeout_minutes]
+      properties:
+        app_key:
+          type: string
+          example: billing-api
+        status:
+          $ref: '#/components/schemas/ClientHealthStatus'
+        last_seen:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-04-17T16:45:00+00:00"
+        last_seen_ago:
+          type: string
+          nullable: true
+          description: Time since `last_seen`, two most significant units.
+          example: 3m 22s
+        timeout_minutes:
+          type: integer
+          nullable: true
+          example: 10
 
     ClientCreated:
       allOf:
@@ -286,6 +341,15 @@ components:
           type: boolean
           description: Set to `false` to deactivate the client immediately.
           example: true
+        heartbeat_timeout_min:
+          type: integer
+          nullable: true
+          minimum: 1
+          maximum: 43200
+          description: >
+            Silence threshold in minutes. `null` turns health monitoring
+            off; omit to keep the current value.
+          example: 10
 
     ClientListResponse:
       type: object
@@ -2037,6 +2101,9 @@ paths:
                     active: true
                     created_at: "2025-01-15T09:00:00+00:00"
                     updated_at: "2025-01-15T09:00:00+00:00"
+                    last_seen_at: "2026-04-17T16:45:00+00:00"
+                    heartbeat_timeout_min: 10
+                    status: active
         "401":
           $ref: '#/components/responses/Unauthorized'
         "503":
@@ -2171,6 +2238,7 @@ paths:
             example:
               name: Billing API v2
               active: false
+              heartbeat_timeout_min: 10
       responses:
         "200":
           description: Updated client — no token.
@@ -2194,8 +2262,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-              example:
-                error: "'name' cannot be empty."
+              examples:
+                emptyName:
+                  summary: Empty name
+                  value:
+                    error: "'name' cannot be empty."
+                invalidTimeout:
+                  summary: Invalid heartbeat timeout
+                  value:
+                    error: "'heartbeat_timeout_min' must be a whole number of minutes from 1 to 43200, or null to disable monitoring."
         "503":
           $ref: '#/components/responses/ClientsUnavailable'
 
@@ -2231,6 +2306,47 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "404":
           $ref: '#/components/responses/NotFound'
+        "503":
+          $ref: '#/components/responses/ClientsUnavailable'
+
+  /api/clients/{app_key}/health:
+    get:
+      operationId: getClientHealth
+      summary: Health of a client application
+      description: |
+        Whether the client is still sending logs: `active`, `silent` (nothing
+        for longer than its `heartbeat_timeout_min`) or `never_seen`.
+
+        `last_seen_at` is updated on every successful ingestion. With
+        `CLIENT_SILENCE_WEBHOOK_URL` set, the server also POSTs an alert
+        (`"alert": "client-silent"`) once per silence episode for enabled
+        clients with a heartbeat timeout.
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Applications]
+      security:
+        - ReadKey: []
+      parameters:
+        - $ref: '#/components/parameters/ClientKey'
+      responses:
+        "200":
+          description: Client health.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientHealth'
+              example:
+                app_key: billing-api
+                status: active
+                last_seen: "2026-04-17T16:45:00+00:00"
+                last_seen_ago: 3m 22s
+                timeout_minutes: 10
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "405":
+          description: Method not allowed (only GET).
         "503":
           $ref: '#/components/responses/ClientsUnavailable'
 

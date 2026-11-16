@@ -475,6 +475,60 @@ uses `storage` to stack each day's estimated data and indexes, Seq-style
 
 ![Storage by age in Size mode: per-day data and index size stacked](https://raw.githubusercontent.com/guibranco/logstream-ui/main/docs/screenshots/desktop-retention-size.png)
 
+### Client health (last seen)
+
+In MariaDB mode the server records when each registered client last had
+entries accepted (`clients.last_seen_at`), so a client that goes quiet after a
+failed deploy or a crash shows up without external monitoring. Apply
+`migrations/008_client_health.sql` to add the columns.
+
+- `last_seen_at` is set on every successful ingestion: after the write in
+  sync mode, and once the batch is stored in buffered mode. Times are kept in
+  memory and written at most every 5 seconds per client (`updated_at` is not
+  touched); the API already includes the not-yet-written times.
+- `heartbeat_timeout_min` (set with `PUT /api/clients/{app_key}`, `null` to
+  disable) is the silence threshold.
+- `GET /api/clients` and `GET /api/clients/{app_key}` include `last_seen_at`,
+  `heartbeat_timeout_min` and `status`; `GET /api/clients/{app_key}/health`
+  returns the status alone:
+
+```json
+{
+  "app_key":         "billing-api",
+  "status":          "active",
+  "last_seen":       "2026-04-17T16:45:00+00:00",
+  "last_seen_ago":   "3m 22s",
+  "timeout_minutes": 10
+}
+```
+
+`status` is `never_seen` (nothing received yet), `silent` (nothing for longer
+than the timeout) or `active` (seen within the timeout, or seen with no
+timeout set). It is separate from `active` in the client record, which is the
+enabled/disabled flag.
+
+**Silence alerts.** Set `CLIENT_SILENCE_WEBHOOK_URL` and every
+`CLIENT_HEALTH_CHECK_SECONDS` (default 30) the server checks enabled clients
+that have a heartbeat timeout, and POSTs one alert per silence episode — the
+next one fires only after the client has sent again and gone silent again:
+
+```json
+{
+  "alert":           "client-silent",
+  "triggered":       "2026-04-17T17:00:00+00:00",
+  "window":          "10m",
+  "app_key":         "billing-api",
+  "name":            "Billing API",
+  "status":          "silent",
+  "last_seen":       "2026-04-17T16:13:00+00:00",
+  "silent_for":      "47m 0s",
+  "timeout_minutes": 10
+}
+```
+
+Which clients were already alerted is kept in memory, so a client still
+silent when the server restarts is reported once more.
+
 ### Testing
 
 ```bash
