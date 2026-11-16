@@ -399,8 +399,20 @@ final class UdpPacketValidatorTest extends TestCase
     #[Test]
     public function python_style_exponents_and_escaped_unicode_are_accepted(): void
     {
-        // json.dumps defaults: 1e-07, "é", ", " separators
-        $log = '{"app_id": "prod", "message": "café", "context": {"duration": 1e-07, "big": 1e+21}}';
+        // json.dumps defaults: 1e-07, "\u00e9" (ensure_ascii), ", " separators.
+        // Single-quoted, so the packet carries the six-character escape, not "é".
+        $log = '{"app_id": "prod", "message": "caf\u00e9", "context": {"duration": 1e-07, "big": 1e+21}}';
+        self::assertStringContainsString('\\u00e9', $log);
+
+        $result = $this->validator()->validate($this->rawPacket($log));
+        self::assertTrue($result->ok);
+        self::assertSame('café', $result->data['log']['message']);
+    }
+
+    #[Test]
+    public function literal_utf8_unicode_is_accepted(): void
+    {
+        $log = '{"app_id":"prod","message":"café"}';
 
         self::assertTrue($this->validator()->validate($this->rawPacket($log))->ok);
     }
