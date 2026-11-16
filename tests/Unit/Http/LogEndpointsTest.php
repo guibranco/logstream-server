@@ -94,6 +94,18 @@ final class LogEndpointsTest extends TestCase
     }
 
     #[Test]
+    public function logo_svg_is_served_also_as_the_svg_favicon(): void
+    {
+        foreach (['/logo.svg', '/favicon.svg'] as $path) {
+            $response = $this->makeRouter()->handle(new ServerRequest('GET', 'http://localhost' . $path));
+
+            self::assertSame(200, $response->getStatusCode(), $path);
+            self::assertStringContainsString('image/svg+xml', $response->getHeaderLine('Content-Type'), $path);
+            self::assertStringContainsString('<svg', (string) $response->getBody(), $path);
+        }
+    }
+
+    #[Test]
     public function openapi_yaml_is_served(): void
     {
         $response = $this->makeRouter()->handle(new ServerRequest('GET', 'http://localhost/openapi.yaml'));

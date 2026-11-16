@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2a4a"/>
+      <stop offset="1" stop-color="#0d1526"/>
+    </linearGradient>
+    <linearGradient id="stream" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2dd4bf"/>
+      <stop offset="1" stop-color="#60a5fa"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="url(#bg)"/>
+  <!-- log lines entering the stream -->
+  <g stroke-linecap="round" stroke-width="22">
+    <line x1="96" y1="150" x2="200" y2="150" stroke="#94a3b8"/>
+    <line x1="96" y1="206" x2="168" y2="206" stroke="#94a3b8" opacity="0.75"/>
+    <line x1="96" y1="262" x2="216" y2="262" stroke="#94a3b8" opacity="0.5"/>
+  </g>
+  <!-- the stream -->
+  <path d="M96 352 C 176 292, 240 412, 320 352 S 416 300, 416 300" fill="none" stroke="url(#stream)" stroke-width="30" stroke-linecap="round"/>
+  <!-- events travelling along it -->
+  <circle cx="160" cy="330" r="16" fill="#e2e8f0"/>
+  <circle cx="276" cy="372" r="16" fill="#e2e8f0"/>
+  <!-- destination -->
+  <circle cx="392" cy="180" r="56" fill="none" stroke="url(#stream)" stroke-width="22"/>
+  <circle cx="392" cy="180" r="18" fill="#2dd4bf"/>
+  <line x1="392" y1="236" x2="408" y2="296" stroke="url(#stream)" stroke-width="22" stroke-linecap="round"/>
+</svg>

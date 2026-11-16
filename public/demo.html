@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>logstream-server — Demo traffic</title>
-  <link rel="icon" href="/favicon.ico">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico" sizes="any">
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     body {
@@ -17,10 +18,7 @@
       padding: 14px 24px; border-bottom: 1px solid #2a2d3d;
       background: linear-gradient(135deg, #1a1d27 0%, #12151f 100%);
     }
-    .logo {
-      width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
-      background: linear-gradient(135deg, #3b82f6, #8b5cf6); font-size: 14px;
-    }
+    .logo { width: 32px; height: 32px; display: block; flex-shrink: 0; }
     .name { font-size: 15px; font-weight: 600; color: #e2e8f0; }
     .badge {
       font-size: 11px; color: #64748b; background: #1e2130;
@@ -67,7 +65,7 @@
 </head>
 <body>
 <header>
-  <div class="logo">📡</div>
+  <img class="logo" src="/logo.svg" alt="" width="32" height="32">
   <span class="name">logstream-server</span>
   <span class="badge">{{APP_VERSION}}</span>
   <span class="badge demo">DEMO MODE</span>

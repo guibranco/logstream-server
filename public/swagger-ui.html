@@ -4,6 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>logstream-server — API Docs</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.17.14/swagger-ui.min.css" />
   <style>
     *, *::before, *::after { box-sizing: border-box; }
@@ -28,13 +30,7 @@
       z-index: 1000;
     }
     .ls-banner__logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
-    .ls-banner__icon {
-      width: 28px; height: 28px;
-      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
-      border-radius: 6px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 14px;
-    }
+    .ls-banner__icon { width: 32px; height: 32px; display: block; flex-shrink: 0; }
     .ls-banner__name  { font-size: 15px; font-weight: 600; color: #e2e8f0; letter-spacing: -0.01em; }
     .ls-banner__version {
       font-size: 11px; color: #64748b;
@@ -186,7 +182,7 @@
   <!-- ── Top banner ──────────────────────────────────────────────────────────── -->
   <header class="ls-banner">
     <a class="ls-banner__logo" href="/">
-      <div class="ls-banner__icon">📡</div>
+      <img class="ls-banner__icon" src="/logo.svg" alt="" width="32" height="32" />
       <span class="ls-banner__name">logstream-server</span>
     </a>
     <span class="ls-banner__version">v{{APP_VERSION}}</span>
