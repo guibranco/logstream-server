@@ -24,6 +24,7 @@ final class EntryFactory
      * @param string|null $defaultAppKey  app_key for items without one (single-key auth only).
      * @param string|null $resolvedAppKey The authenticated app_key; wins over the items otherwise.
      * @param string|null $senderIp       Taken from the connection, never from the payload.
+     * @param string|null $transport      'tcp' or 'udp' — set by the listener, never from the payload.
      * @return array{0: array<int, LogEntry>, 1: list<string>}
      */
     public static function build(
@@ -35,6 +36,7 @@ final class EntryFactory
         ?string $topUserAgent,
         ?string $topBatchId,
         ?string $senderIp,
+        ?string $transport = null,
     ): array {
         $entries = [];
         $errors  = [];
@@ -71,6 +73,7 @@ final class EntryFactory
                     'timestamp'  => $raw['timestamp']  ?? (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339_EXTENDED),
                     'created_at' => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339_EXTENDED),
                     'sender_ip'  => $senderIp,
+                    'transport'  => $transport,
                 ]);
             } catch (\Throwable $e) {
                 $errors[] = "Entry #{$i}: " . $e->getMessage();

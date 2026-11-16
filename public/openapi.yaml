@@ -205,6 +205,16 @@ components:
             from `X-Forwarded-For` (or `X-Real-IP`). `null` for entries stored
             before this field existed.
           example: 203.0.113.7
+        transport:
+          type: string
+          nullable: true
+          enum: [tcp, udp]
+          description: >
+            Network transport the entry arrived over, set by the server:
+            `tcp` for HTTP ingestion (`POST /api/logs`), `udp` for the UDP
+            listener. Cannot be set by the client. `null` for the server's own
+            logs and for entries stored before this field existed.
+          example: tcp
 
     Client:
       type: object
@@ -1219,6 +1229,15 @@ components:
       description: Filter by the sender's IP address (exact match).
       example: 203.0.113.7
 
+    Transport:
+      name: transport
+      in: query
+      schema: { type: string, enum: [tcp, udp] }
+      description: |
+        Filter by the transport the entry arrived over (exact match). To match
+        either, send `transport[]` once per value: `transport[]=tcp&transport[]=udp`.
+      example: udp
+
     MessageTemplate:
       name: message_template
       in: query
@@ -1723,6 +1742,7 @@ paths:
         - $ref: '#/components/parameters/TraceId'
         - $ref: '#/components/parameters/BatchId'
         - $ref: '#/components/parameters/SenderIp'
+        - $ref: '#/components/parameters/Transport'
         - $ref: '#/components/parameters/DateFrom'
         - $ref: '#/components/parameters/DateTo'
         - $ref: '#/components/parameters/Range'

@@ -36,6 +36,7 @@ final class MariaDBStorageTest extends TestCase
                 app_id     TEXT NOT NULL,
                 user_agent TEXT NULL,
                 sender_ip  TEXT NULL,
+                transport  TEXT NULL,
                 level      TEXT NOT NULL,
                 category   TEXT NOT NULL,
                 message    TEXT NOT NULL,
@@ -133,7 +134,7 @@ final class MariaDBStorageTest extends TestCase
     {
         $sql = MariaDBStorage::insertSql(3);
 
-        self::assertSame(3, substr_count($sql, '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'));
+        self::assertSame(3, substr_count($sql, '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'));
         self::assertStringContainsString('ON DUPLICATE KEY UPDATE id = id', $sql);
     }
 

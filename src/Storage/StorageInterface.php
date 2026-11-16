@@ -23,7 +23,7 @@ interface StorageInterface
      *
      * Supported $filters keys:
      *   app_key, app_id, user_agent, level, category,
-     *   trace_id, batch_id, sender_ip, date_from, date_to,
+     *   trace_id, batch_id, sender_ip, transport, date_from, date_to,
      *   search (full-text on message),
      *   app_key, app_id and level may also be a list of strings: an entry
      *   matches when its value is any of them,

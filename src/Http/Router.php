@@ -600,9 +600,10 @@ final class Router
         ?string $topBatchId,
         ?string $senderIp,
     ): array {
+        // Everything reaching the router came over HTTP, i.e. TCP.
         return EntryFactory::build(
             $rawLogs, $isSingleKey, $defaultAppKey, $resolvedAppKey,
-            $topAppId, $topUserAgent, $topBatchId, $senderIp,
+            $topAppId, $topUserAgent, $topBatchId, $senderIp, 'tcp',
         );
     }
 
@@ -833,6 +834,7 @@ final class Router
             'trace_id'   => $q['trace_id']   ?? null,
             'batch_id'   => $q['batch_id']   ?? null,
             'sender_ip'  => $q['sender_ip']  ?? null,
+            'transport'  => self::oneOrMany($q['transport'] ?? null),
             'date_from'  => $q['date_from']  ?? null,
             'date_to'    => $q['date_to']    ?? null,
             'search'     => $q['search']     ?? null,

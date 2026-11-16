@@ -217,6 +217,30 @@ final class LogEndpointsTest extends TestCase
     }
 
     #[Test]
+    public function ingest_marks_http_entries_as_tcp_and_ignores_the_body(): void
+    {
+        $captured = [];
+        $storage  = $this->createMock(StorageInterface::class);
+        $storage->expects(self::once())->method('save')
+            ->willReturnCallback(function (LogEntry $e) use (&$captured): void { $captured[] = $e; });
+
+        $request = (new ServerRequest('POST', 'http://localhost/api/logs'))
+            ->withBody(Utils::streamFor(json_encode([
+                'app_key'   => 'my-app',
+                'app_id'    => 'prod',
+                'message'   => 'hello',
+                'transport' => 'udp',
+            ])));
+
+        $response = $this->makeRouter($storage)->handle($request);
+        $body     = json_decode((string) $response->getBody(), true);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame('tcp', $captured[0]->transport);
+        self::assertSame('tcp', $body['entries'][0]['transport']);
+    }
+
+    #[Test]
     public function ingest_resolves_the_sender_ip_through_a_trusted_proxy(): void
     {
         $captured = null;
@@ -617,6 +641,20 @@ final class LogEndpointsTest extends TestCase
             ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
 
         $response = $this->makeRouter($storage)->handle($this->authed('GET', '/api/logs?sender_ip=203.0.113.7'));
+
+        self::assertSame(200, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function search_forwards_the_transport_filter(): void
+    {
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::once())
+            ->method('search')
+            ->with(self::callback(fn(array $f) => ($f['transport'] ?? null) === 'udp'), 100, 0)
+            ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
+
+        $response = $this->makeRouter($storage)->handle($this->authed('GET', '/api/logs?transport=udp'));
 
         self::assertSame(200, $response->getStatusCode());
     }

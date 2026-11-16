@@ -138,6 +138,7 @@ curl -s -X POST http://localhost:8081/api/logs \
 | `context` | object | ❌ | Arbitrary JSON payload |
 | `timestamp` | ISO 8601 | ❌ | When the event occurred; defaults to server receive time |
 | `sender_ip` | string | — | Set by the server to the client's IP address; cannot be supplied. Behind a reverse proxy, set `TRUSTED_PROXIES` |
+| `transport` | string | — | Set by the server: `tcp` (HTTP) or `udp`; cannot be supplied |
 
 ### Batch ingestion
 
@@ -181,6 +182,7 @@ X-App-Id: vinhedo-3
 | `trace_id` | Exact match |
 | `batch_id` | Exact match |
 | `sender_ip` | Exact match |
+| `transport` | `tcp` or `udp` (exact match) |
 | `date_from` | ISO 8601 — inclusive lower bound |
 | `date_to` | ISO 8601 — inclusive upper bound |
 | `search` | Substring match on `message` |
