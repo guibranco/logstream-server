@@ -9,11 +9,12 @@ use LogService\Auth\WriteAuthInterface;
 use LogService\Demo\DemoTraffic;
 use LogService\Health\ClientActivityTracker;
 use LogService\Health\ClientHealth;
+use LogService\Ingest\EntryFactory;
+use LogService\Ingest\EntrySink;
 use LogService\Ingest\IngestBuffer;
 use LogService\Ingest\IngestConfig;
 use LogService\Logging\SelfLogConfig;
 use LogService\Models\LogEntry;
-use LogService\Models\MessageTemplate;
 use LogService\Repository\Client;
 use LogService\Repository\ClientRepository;
 use LogService\Retention\RetentionPolicy;
@@ -23,7 +24,8 @@ use LogService\Retention\RetentionRunner;
 use LogService\Retention\RetentionVolumeAnalyzerInterface;
 use LogService\Storage\ContextFilter;
 use LogService\Storage\StorageInterface;
-use LogService\Support\Identifier;
+use LogService\Udp\UdpConfig;
+use LogService\Udp\UdpLogServer;
 use LogService\WebSocket\LogHub;
 use Psr\Http\Message\ServerRequestInterface;
 use React\Http\Message\Response;
@@ -82,7 +84,15 @@ final class Router
         private readonly bool                                $demoMode          = false,
         /** Records last-seen times on ingestion (MariaDB only). Buffered writes are recorded by the buffer's onPersisted callback. */
         private readonly ?ClientActivityTracker              $clientActivity    = null,
-    ) {}
+        /** UDP ingest (null when UDP_ENABLED=false); only read for /api/health and /api/info. */
+        private readonly ?UdpLogServer                       $udpServer         = null,
+        private readonly ?UdpConfig                          $udpConfig         = null,
+    ) {
+        $this->sink = new EntrySink($storage, $hub, $ingestBuffer, $clientActivity);
+    }
+
+    /** Shared with UDP: sync writes, or the ingest buffer. */
+    private readonly EntrySink $sink;
 
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -458,6 +468,7 @@ final class Router
             'time'           => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339),
             'ws_connections' => $this->hub->getConnectionCount(),
             'ingest'         => $this->ingestInfo(withStats: true),
+            'udp'            => $this->udpInfo(withStats: true),
         ], 200, $cors);
     }
 
@@ -478,13 +489,46 @@ final class Router
                 'self_logging'      => $this->selfLogging,
                 // GET /demo page and /api/demo/* fake-traffic endpoints.
                 'demo_mode'         => $this->demoMode,
+                // HMAC-signed log packets over UDP (see the "udp" block).
+                'udp_ingest'        => $this->udpServer !== null,
             ],
             'self_logging' => [
                 'enabled' => $this->selfLogging,
                 'app_key' => SelfLogConfig::APP_KEY,
             ],
             'ingest'       => $this->ingestInfo(withStats: false),
+            'udp'          => $this->udpInfo(withStats: false),
         ], 200, $cors);
+    }
+
+    /**
+     * UDP ingest status. /api/info gives what a client needs to send packets;
+     * /api/health adds whether the socket is bound and the counters.
+     *
+     * @return array<string, mixed>
+     */
+    private function udpInfo(bool $withStats): array
+    {
+        if ($this->udpServer === null || $this->udpConfig === null) {
+            return ['enabled' => false];
+        }
+
+        $info = [
+            'enabled'             => true,
+            'port'                => $this->udpConfig->port,
+            'protocol_version'    => 1,
+            'max_packet_size'     => $this->udpConfig->maxPacketBytes,
+            'timestamp_window_ms' => $this->udpConfig->timestampWindowMs,
+        ];
+
+        if ($withStats) {
+            $info['listening'] = $this->udpServer->isListening();
+            $info += $this->udpServer->stats();
+            // Always a JSON object, also before the first rejection.
+            $info['rejected'] = (object) $info['rejected'];
+        }
+
+        return $info;
     }
 
     /**
@@ -537,8 +581,7 @@ final class Router
     }
 
     /**
-     * Turns raw POST /api/logs items into entries. Items that fail validation
-     * become messages in $errors, keyed like the request.
+     * Turns raw POST /api/logs items into entries (see EntryFactory::build()).
      *
      * @param array<int, mixed> $rawLogs
      * @return array{0: array<int, LogEntry>, 1: list<string>}
@@ -553,48 +596,10 @@ final class Router
         ?string $topBatchId,
         ?string $senderIp,
     ): array {
-        $entries = [];
-        $errors  = [];
-
-        foreach ($rawLogs as $i => $raw) {
-            $entryAppKey = $isSingleKey
-                ? ($raw['app_key'] ?? $defaultAppKey)
-                : $resolvedAppKey;
-
-            if (SelfLogConfig::isReservedAppKey(is_string($entryAppKey) ? $entryAppKey : null)) {
-                $errors[] = "Entry #{$i}: app_key '" . SelfLogConfig::APP_KEY . "' is reserved for the server's own logs";
-                continue;
-            }
-
-            try {
-                [$message, $template] = MessageTemplate::resolve(
-                    $raw['message'] ?? null,
-                    $raw['message_template'] ?? null,
-                    $raw['context'] ?? null,
-                );
-
-                $entries[$i] = LogEntry::fromArray([
-                    'id'         => $this->ulid(),
-                    'trace_id'   => $raw['trace_id']   ?? $this->uuid4(),
-                    'batch_id'   => $raw['batch_id']   ?? $topBatchId,
-                    'app_key'    => $entryAppKey,
-                    'app_id'     => $raw['app_id']     ?? $topAppId,
-                    'user_agent' => $raw['user_agent'] ?? $topUserAgent,
-                    'level'      => $raw['level']      ?? 'info',
-                    'category'   => $raw['category']   ?? 'general',
-                    'message'    => $message           ?? '',
-                    'message_template' => $template,
-                    'context'    => $raw['context']    ?? null,
-                    'timestamp'  => $raw['timestamp']  ?? (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339_EXTENDED),
-                    'created_at' => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339_EXTENDED),
-                    'sender_ip'  => $senderIp,
-                ]);
-            } catch (\Throwable $e) {
-                $errors[] = "Entry #{$i}: " . $e->getMessage();
-            }
-        }
-
-        return [$entries, $errors];
+        return EntryFactory::build(
+            $rawLogs, $isSingleKey, $defaultAppKey, $resolvedAppKey,
+            $topAppId, $topUserAgent, $topBatchId, $senderIp,
+        );
     }
 
     /**
@@ -677,21 +682,8 @@ final class Router
      */
     private function ingestSynchronously(array $entries, array $errors, array $cors): Response
     {
-        $saved = [];
-
-        foreach ($entries as $i => $entry) {
-            try {
-                $this->storage->save($entry);
-                $this->hub->broadcast($entry);
-                $saved[] = $entry->toArray();
-            } catch (\Throwable $e) {
-                $errors[] = "Entry #{$i}: " . $e->getMessage();
-            }
-        }
-
-        if ($saved !== []) {
-            $this->clientActivity?->touch(...array_column($saved, 'app_key'));
-        }
+        [$saved, $saveErrors] = $this->sink->saveNow($entries);
+        $errors = [...$errors, ...$saveErrors];
 
         $status = empty($saved) ? 400 : 201;
 
@@ -713,7 +705,7 @@ final class Router
      */
     private function ingestBuffered(array $entries, array $errors, ?string $prefer, array $cors): Response|PromiseInterface
     {
-        $ticket = $this->ingestBuffer->enqueue(array_values($entries));
+        $ticket = $this->sink->enqueue(array_values($entries));
 
         if ($ticket === null) {
             $reason = $this->ingestBuffer->isAccepting()
@@ -1007,6 +999,9 @@ final class Router
         } catch (\RuntimeException $e) {
             return $this->json(['error' => $e->getMessage()], 409, $cors);
         }
+        // The write-auth cache also remembers unknown keys: drop a cached miss
+        // for this app_key (e.g. from a UDP packet sent before it was registered).
+        $this->writeAuthDb?->flushCache();
         return $this->json($client->toCreatedArray(), 201, $cors);
     }
 
@@ -1218,17 +1213,5 @@ final class Router
             'Content-Type'  => $contentType . '; charset=utf-8',
             'Cache-Control' => 'no-cache',
         ], $content);
-    }
-
-    // ─── ID generators ────────────────────────────────────────────────────────
-
-    private function ulid(): string
-    {
-        return Identifier::ulid();
-    }
-
-    private function uuid4(): string
-    {
-        return Identifier::uuid4();
     }
 }

@@ -22,7 +22,14 @@ use Psr\Http\Message\ServerRequestInterface;
  */
 final class DatabaseWriteAuth implements WriteAuthInterface, CacheFlushableInterface
 {
-    /** In-memory cache: app_key → api_token (populated lazily, cleared on miss). */
+    /**
+     * Most app_keys (known or not) kept in the cache. Unknown keys are cached
+     * too, so a flood of made-up keys (HTTP or UDP) could otherwise grow it
+     * without limit; above this the cache starts over.
+     */
+    private const MAX_CACHE_ENTRIES = 10_000;
+
+    /** In-memory cache: app_key → api_token, or null for unknown / inactive keys. */
     private array $cache = [];
 
     public function __construct(private readonly Connection $db) {}
@@ -53,6 +60,17 @@ final class DatabaseWriteAuth implements WriteAuthInterface, CacheFlushableInter
         return AuthResult::success($apiKey);
     }
 
+    /**
+     * The active client's api_token, or null when unknown or inactive. Used
+     * as the HMAC key for UDP packets; shares this class's cache, so
+     * flushCache() (called when a client is updated, rotated or deleted)
+     * applies to UDP straight away.
+     */
+    public function tokenFor(string $appKey): ?string
+    {
+        return $this->lookupToken($appKey);
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
 
     /**
@@ -79,6 +97,9 @@ final class DatabaseWriteAuth implements WriteAuthInterface, CacheFlushableInter
         }
 
         $token = $row['api_token'] ?? null;
+        if (count($this->cache) >= self::MAX_CACHE_ENTRIES) {
+            $this->cache = [];
+        }
         $this->cache[$appKey] = $token;
 
         return $token;

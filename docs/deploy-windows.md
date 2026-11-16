@@ -400,6 +400,10 @@ New-NetFirewallRule -DisplayName "LogStream HTTP API" `
 # Allow WebSocket port
 New-NetFirewallRule -DisplayName "LogStream WebSocket" `
     -Direction Inbound -Protocol TCP -LocalPort 8080 -Action Allow
+
+# UDP ingest (UDP_ENABLED=true) — only from the hosts that send logs
+New-NetFirewallRule -DisplayName "LogStream UDP ingest" `
+    -Direction Inbound -Protocol UDP -LocalPort 8082 -RemoteAddress 10.0.0.0/8 -Action Allow
 ```
 
 ---

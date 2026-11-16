@@ -34,3 +34,6 @@ services:
       # Store the server's own messages as the app "logstream-server" (false to turn off)
       - key: SELF_LOG_ENABLED
         value: "true"
+      # Render accepts only HTTP(S): UDP ingest can't be reached here
+      - key: UDP_ENABLED
+        value: "false"

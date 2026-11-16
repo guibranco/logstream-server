@@ -27,9 +27,10 @@ RUN composer install \
         --no-progress
 
 # ── Runtime ────────────────────────────────────────────────────────────────────
-# HTTP API  → 8081
-# WebSocket → 8080
-EXPOSE 8081 8080
+# HTTP API  → 8081/tcp
+# WebSocket → 8080/tcp
+# UDP ingest → 8082/udp (UDP_ENABLED, UDP_PORT)
+EXPOSE 8081 8080 8082/udp
 
 HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=5 \
     CMD curl -fsS http://localhost:8081/api/health || exit 1

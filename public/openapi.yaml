@@ -732,6 +732,13 @@ components:
                 deprecations/warnings/errors, ingest problems) as entries of
                 the application `logstream-server` (`SELF_LOG_ENABLED`).
               example: true
+            udp_ingest:
+              type: boolean
+              description: |
+                True when the server accepts HMAC-signed log packets over UDP
+                (`UDP_ENABLED`). See the `udp` block and the README's
+                *UDP ingestion* section.
+              example: true
         self_logging:
           type: object
           description: The reserved application the server's own messages are stored under.
@@ -745,6 +752,74 @@ components:
               example: logstream-server
         ingest:
           $ref: '#/components/schemas/IngestMode'
+        udp:
+          $ref: '#/components/schemas/UdpInfo'
+
+    UdpInfo:
+      type: object
+      required: [enabled]
+      description: |
+        UDP ingest settings a client needs to send packets. Absent fields mean
+        UDP is off (`{"enabled": false}`). UDP itself is not part of this HTTP
+        API: each datagram is one HMAC-signed packet
+        `{"v":1,"key","ts","nonce","sig","log"}`, and the server never replies.
+      properties:
+        enabled:
+          type: boolean
+          example: true
+        port:
+          type: integer
+          example: 8082
+        protocol_version:
+          type: integer
+          description: Value of the packet's `v` field.
+          example: 1
+        max_packet_size:
+          type: integer
+          description: Larger datagrams are dropped (`UDP_MAX_PACKET_SIZE`).
+          example: 8192
+        timestamp_window_ms:
+          type: integer
+          description: Accepted difference between the packet's `ts` and server time.
+          example: 30000
+
+    UdpStats:
+      description: UDP settings plus whether the socket is bound and what it has done since start.
+      allOf:
+        - $ref: '#/components/schemas/UdpInfo'
+        - type: object
+          properties:
+            listening:
+              type: boolean
+              example: true
+            received:
+              type: integer
+              description: Datagrams received.
+              example: 1520
+            accepted:
+              type: integer
+              description: Entries accepted (queued or written).
+              example: 1503
+            dropped:
+              type: integer
+              description: Valid packets not stored (ingest buffer full, shutting down, or write failed).
+              example: 0
+            rejected:
+              type: object
+              description: |
+                Rejected datagrams per reason: `source_not_allowed`,
+                `too_large`, `invalid_json`, `bad_version`, `missing_field`,
+                `bad_nonce`, `stale`, `replay`, `reserved_key`, `unknown_key`,
+                `bad_signature`, `nonce_cache_full`, `invalid_entry`.
+              additionalProperties:
+                type: integer
+              example:
+                bad_signature: 12
+                stale: 5
+            nonces:
+              type: integer
+              description: Nonces currently remembered for replay protection.
+              example: 840
 
     IngestMode:
       type: object
@@ -1063,6 +1138,8 @@ components:
           example: 2
         ingest:
           $ref: '#/components/schemas/IngestStats'
+        udp:
+          $ref: '#/components/schemas/UdpStats'
 
     ErrorResponse:
       type: object

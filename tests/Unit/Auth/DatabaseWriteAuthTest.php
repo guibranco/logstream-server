@@ -207,4 +207,38 @@ final class DatabaseWriteAuthTest extends TestCase
         );
         self::assertTrue($updated->ok);
     }
+
+    // ── tokenFor() (UDP HMAC key) ─────────────────────────────────────────────
+
+    #[Test]
+    public function token_for_returns_the_active_clients_token(): void
+    {
+        self::assertSame('token-billing', $this->auth->tokenFor('billing-api'));
+        self::assertNull($this->auth->tokenFor('inactive-app'));
+        self::assertNull($this->auth->tokenFor('ghost'));
+    }
+
+    #[Test]
+    public function token_for_shares_the_cache_so_flush_applies_to_udp(): void
+    {
+        self::assertSame('token-billing', $this->auth->tokenFor('billing-api'));
+
+        $this->pdo->exec("UPDATE clients SET active = 0 WHERE app_key = 'billing-api'");
+        self::assertSame('token-billing', $this->auth->tokenFor('billing-api'), 'still cached');
+
+        $this->auth->flushCache();
+        self::assertNull($this->auth->tokenFor('billing-api'), 'deactivation applies after the flush');
+    }
+
+    #[Test]
+    public function the_cache_is_bounded_for_floods_of_unknown_keys(): void
+    {
+        for ($i = 0; $i < 10_001; $i++) {
+            self::assertNull($this->auth->tokenFor("unknown-{$i}"));
+        }
+
+        $cache = (new \ReflectionProperty($this->auth, 'cache'))->getValue($this->auth);
+        self::assertLessThanOrEqual(10_000, count($cache));
+        self::assertSame('token-billing', $this->auth->tokenFor('billing-api'));
+    }
 }

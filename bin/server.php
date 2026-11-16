@@ -23,6 +23,7 @@ use LogService\Http\ClientIpResolver;
 use LogService\Http\FailedRequestLogger;
 use LogService\Http\Router;
 use LogService\Ingest\AsyncMysqlBatchWriter;
+use LogService\Ingest\EntrySink;
 use LogService\Ingest\IngestBuffer;
 use LogService\Ingest\IngestConfig;
 use LogService\Ingest\StorageBatchWriter;
@@ -41,6 +42,9 @@ use LogService\Retention\RetentionConfig;
 use LogService\Retention\RetentionRunner;
 use LogService\Storage\FileStorage;
 use LogService\Storage\MariaDBStorage;
+use LogService\Udp\UdpConfig;
+use LogService\Udp\UdpLogServer;
+use LogService\Udp\UdpPacketValidator;
 use LogService\WebSocket\LogHub;
 use Ratchet\Http\HttpServer as RatchetHttpServer;
 use Ratchet\Server\IoServer;
@@ -71,6 +75,8 @@ $demoMode    = in_array(strtolower(trim((string) ($_ENV['DEMO_MODE'] ?? ''))), [
 try {
     $ingestConfig  = IngestConfig::fromEnv($_ENV);
     $selfLogConfig = SelfLogConfig::fromEnv($_ENV);
+    $udpConfig     = UdpConfig::fromEnv($_ENV);
+    $udpConfig->assertNoPortClash($httpPort, $wsPort);
 } catch (\InvalidArgumentException $e) {
     $logger->critical('config', $e->getMessage());
     exit(1);
@@ -257,6 +263,34 @@ if ($demoMode) {
     $logger->warning('demo', 'DEMO_MODE is on: /demo and /api/demo/run accept fake traffic without a key');
 }
 
+// ─── UDP ingest ───────────────────────────────────────────────────────────────
+// HMAC-signed packets on UDP_PORT, stored through the same pipeline as
+// POST /api/logs. The HMAC key is the client's api_token (MariaDB, shared with
+// the HTTP token cache) or API_SECRET (file mode; empty = every packet rejected).
+
+$udpServer = null;
+
+if ($udpConfig->enabled) {
+    $udpTokenLookup = $writeAuthDb !== null
+        ? static fn(string $appKey): ?string => $writeAuthDb->tokenFor($appKey)
+        : static fn(string $appKey): ?string => $apiSecret !== '' ? $apiSecret : null;
+
+    if ($writeAuthDb === null && $apiSecret === '') {
+        $logger->warning('udp', 'API_SECRET is empty — every UDP packet will be rejected (UDP always requires a secret)');
+    }
+
+    $udpServer = new UdpLogServer(
+        UdpPacketValidator::fromConfig($udpConfig, $udpTokenLookup),
+        new EntrySink($storage, $hub, $ingestBuffer, $clientActivity),
+        $udpConfig->allowList(),
+        $udpConfig->address(),
+        $logger->channel('udp'),
+    );
+    $udpServer->start($loop);
+} else {
+    $logger->info('udp', 'Disabled (UDP_ENABLED=false)');
+}
+
 $wsSocket = new SocketServer("0.0.0.0:{$wsPort}", [], $loop);
 $wsServer = new IoServer(
     new RatchetHttpServer(new WsServer($hub)),
@@ -285,6 +319,8 @@ $router = new Router(
     selfLogging:      $selfLogConfig->enabled,
     demoMode:         $demoMode,
     clientActivity:   $clientActivity,
+    udpServer:        $udpServer,
+    udpConfig:        $udpConfig,
 );
 
 // StreamingRequestMiddleware must come first: without it HttpServer prepends its
@@ -321,6 +357,9 @@ echo "║           LogService started             ║\n";
 echo "╠══════════════════════════════════════════╣\n";
 echo "║  HTTP API  →  http://0.0.0.0:{$httpPort}       ║\n";
 echo "║  WebSocket →  ws://0.0.0.0:{$wsPort}          ║\n";
+echo $udpConfig->enabled
+    ? "║  UDP       →  udp://{$udpConfig->address()}\n"
+    : "║  UDP       →  off\n";
 echo "╠══════════════════════════════════════════╣\n";
 echo "║  Write auth : {$authMode}\n";
 echo "║  Read key   : " . (empty($uiSecret) ? '⚠️  NOT SET' : '✅ set') . "\n";
@@ -331,6 +370,8 @@ $logger->info('startup', "LogStream server {$appVersion} started", [
     'php_version'  => PHP_VERSION,
     'http_port'    => $httpPort,
     'ws_port'      => $wsPort,
+    'udp_enabled'  => $udpConfig->enabled,
+    'udp_port'     => $udpConfig->enabled ? $udpConfig->port : null,
     'storage_type' => $storageType,
     'write_auth'   => $authMode,
     'read_key_set' => !empty($uiSecret),
@@ -413,7 +454,7 @@ if ($clientActivity !== null) {
 if (function_exists('pcntl_signal')) {
     $shuttingDown = false;
     $shutdown = function (int $signal) use (
-        &$shuttingDown, $loop, $httpSocket, $wsSocket, $ingestBuffer, $asyncWriter, $ingestConfig, $logger, $clientActivity
+        &$shuttingDown, $loop, $httpSocket, $wsSocket, $udpServer, $ingestBuffer, $asyncWriter, $ingestConfig, $logger, $clientActivity
     ): void {
         if ($shuttingDown) {
             $logger->log('warning', 'shutdown', 'Second signal — exiting now.', now: true);
@@ -424,6 +465,7 @@ if (function_exists('pcntl_signal')) {
 
         $httpSocket->close();
         $wsSocket->close();
+        $udpServer?->stop($loop);
         $clientActivity?->stop($loop);
 
         if ($ingestBuffer === null) {
