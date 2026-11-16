@@ -24,6 +24,9 @@ final class IpRangeListTest extends TestCase
             'IPv6 /32'            => ['2001:db8::/32', '2001:db8:1::5', true],
             'IPv6 vs IPv4 range'  => ['10.0.0.0/8', '2001:db8::1', false],
             'list'                => ['127.0.0.1, ::1, 10.0.0.0/8', '::1', true],
+            'mapped exact'        => ['::ffff:192.0.2.7', '192.0.2.7', true],
+            'mapped /120'         => ['::ffff:198.51.100.0/120', '198.51.100.200', true],
+            'mapped /120 outside' => ['::ffff:198.51.100.0/120', '198.51.101.1', false],
         ];
     }
 

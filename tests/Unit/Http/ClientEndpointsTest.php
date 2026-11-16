@@ -182,6 +182,24 @@ final class ClientEndpointsTest extends TestCase
         self::assertSame(409, $response->getStatusCode());
     }
 
+    #[Test]
+    public function create_flushes_the_write_auth_cache(): void
+    {
+        // A key looked up before it was registered (e.g. a UDP packet) is
+        // cached as unknown; registering it must clear that.
+        $repo = $this->createStub(ClientRepository::class);
+        $repo->method('create')->willReturn($this->makeClient(token: 'generated-token-abc'));
+
+        $writeAuthDb = $this->createMock(CacheFlushableInterface::class);
+        $writeAuthDb->expects(self::once())->method('flushCache');
+
+        $response = $this->makeRouter($repo, $writeAuthDb)->handle(
+            $this->authed('POST', '/api/clients', json_encode(['name' => 'Billing API', 'app_key' => 'billing-api']))
+        );
+
+        self::assertSame(201, $response->getStatusCode());
+    }
+
     // ── PUT /api/clients/{key} ────────────────────────────────────────────────
 
     #[Test]

@@ -383,4 +383,87 @@ final class UdpPacketValidatorTest extends TestCase
         self::assertSame('bad_signature', $fail->reason);
         self::assertSame('HMAC mismatch', $fail->detail);
     }
+
+    // ── Raw-bytes signatures (any JSON encoder) ───────────────────────────────
+
+    /** Packet whose log text is exactly $logJson, signed over that text. */
+    private function rawPacket(string $logJson, ?string $signedLog = null, string $pad = ''): string
+    {
+        $nonce = bin2hex(random_bytes(8));
+        $sig   = hash_hmac('sha256', self::APP_KEY . ':' . $this->now . ':' . $nonce . ':' . ($signedLog ?? $logJson), self::TOKEN);
+
+        return '{' . $pad . '"v":1,' . $pad . '"key":"' . self::APP_KEY . '",' . $pad . '"ts":' . $this->now . ','
+            . $pad . '"nonce":"' . $nonce . '",' . $pad . '"sig":"' . $sig . '",' . $pad . '"log":' . $logJson . $pad . '}';
+    }
+
+    #[Test]
+    public function python_style_exponents_and_escaped_unicode_are_accepted(): void
+    {
+        // json.dumps defaults: 1e-07, "é", ", " separators
+        $log = '{"app_id": "prod", "message": "café", "context": {"duration": 1e-07, "big": 1e+21}}';
+
+        self::assertTrue($this->validator()->validate($this->rawPacket($log))->ok);
+    }
+
+    #[Test]
+    public function pretty_printed_packet_signed_over_the_compact_log_is_accepted(): void
+    {
+        $compact = '{"app_id":"prod","message":"m","context":{"a":[1,2],"b":{}}}';
+        $pretty  = "{\n  \"app_id\": \"prod\",\n  \"message\": \"m\",\n  \"context\": {\"a\": [1, 2], \"b\": {}}\n}";
+
+        self::assertTrue($this->validator()->validate($this->rawPacket($pretty, $compact, "\n  "))->ok);
+    }
+
+    #[Test]
+    public function signature_over_other_text_is_still_rejected(): void
+    {
+        $log = '{"app_id":"prod","message":"m"}';
+
+        self::assertRejected(
+            $this->validator()->validate($this->rawPacket($log, '{"app_id":"prod","message":"other"}')),
+            UdpPacketValidator::REASON_BAD_SIGNATURE,
+        );
+    }
+
+    #[Test]
+    public function property_name_starting_with_nul_does_not_throw(): void
+    {
+        // Valid JSON that json_decode() can't turn into objects.
+        $log = '{"app_id":"prod","message":"m","context":{"\u0000x":1}}';
+
+        // Signed over something else: the raw check fails and the object decode
+        // fallback can't run — rejected, not a TypeError that stops the loop.
+        self::assertRejected(
+            $this->validator()->validate($this->rawPacket($log, '{"other":1}')),
+            UdpPacketValidator::REASON_BAD_SIGNATURE,
+        );
+        self::assertTrue($this->validator()->validate($this->rawPacket($log))->ok, 'the raw text still verifies');
+    }
+
+    #[Test]
+    public function raw_log_value_extraction(): void
+    {
+        self::assertSame('{"a":"}{\"[","b":[1,{"c":2}]}', UdpPacketValidator::rawLogValue('{"x":"log","log":{"a":"}{\"[","b":[1,{"c":2}]},"y":1}'));
+        self::assertSame('{"second":1}', UdpPacketValidator::rawLogValue('{"log":{"first":1}, "log" : {"second":1} }'));
+        self::assertSame('{"k":1}', UdpPacketValidator::rawLogValue('{"log":{"k":1}}'));
+        self::assertNull(UdpPacketValidator::rawLogValue('{"v":1}'));
+        self::assertNull(UdpPacketValidator::rawLogValue('[1]'));
+    }
+
+    // ── Exact window boundary ─────────────────────────────────────────────────
+
+    #[Test]
+    public function packet_at_the_far_edge_cannot_be_replayed_when_its_nonce_would_expire(): void
+    {
+        $v      = $this->validator(windowMs: 30_000, nonceTtl: 60);
+        $packet = self::json($this->packet(['ts' => self::NOW + 30_000]));
+
+        self::assertTrue($v->validate($packet)->ok);
+
+        $this->now = self::NOW + 60_000; // expiry instant; ts is still exactly in the window
+        self::assertRejected($v->validate($packet), UdpPacketValidator::REASON_REPLAY);
+
+        $this->now = self::NOW + 60_001;
+        self::assertRejected($v->validate($packet), UdpPacketValidator::REASON_STALE);
+    }
 }

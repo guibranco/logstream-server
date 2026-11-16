@@ -524,6 +524,8 @@ final class Router
         if ($withStats) {
             $info['listening'] = $this->udpServer->isListening();
             $info += $this->udpServer->stats();
+            // Always a JSON object, also before the first rejection.
+            $info['rejected'] = (object) $info['rejected'];
         }
 
         return $info;
@@ -997,6 +999,9 @@ final class Router
         } catch (\RuntimeException $e) {
             return $this->json(['error' => $e->getMessage()], 409, $cors);
         }
+        // The write-auth cache also remembers unknown keys: drop a cached miss
+        // for this app_key (e.g. from a UDP packet sent before it was registered).
+        $this->writeAuthDb?->flushCache();
         return $this->json($client->toCreatedArray(), 201, $cors);
     }
 

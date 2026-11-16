@@ -87,15 +87,21 @@ final class UdpLogServer
             function (Socket $socket) use ($loop): void {
                 $this->socket = $socket;
                 $socket->on('message', function (string $raw, string $peer): void {
-                    $this->handle($raw, $peer);
+                    // Never let one packet take down the event loop (and with it HTTP and WebSocket).
+                    try {
+                        $this->handle($raw, $peer);
+                    } catch (\Throwable $e) {
+                        $this->reject('internal_error', IpRangeList::normalise($peer), $e::class . ': ' . $e->getMessage());
+                    }
                 });
                 $socket->on('error', function (\Throwable $e): void {
                     ($this->log)('error', 'UDP socket error: ' . $e->getMessage(), []);
                 });
                 $this->timers[] = $loop->addPeriodicTimer(5.0, fn() => $this->validator->pruneExpired());
+                // Logs what is still held back, still at most once per reason per interval.
                 $this->timers[] = $loop->addPeriodicTimer(
                     self::LOG_INTERVAL_SECONDS,
-                    fn() => $this->flushRejectionLog(force: true),
+                    fn() => $this->flushRejectionLog(force: false),
                 );
                 ($this->log)('info', "UDP listening on udp://{$this->address}", ['address' => $this->address]);
             },

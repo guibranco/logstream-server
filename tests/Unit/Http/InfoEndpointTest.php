@@ -184,4 +184,25 @@ final class InfoEndpointTest extends TestCase
         self::assertSame(1, $health['udp']['received']);
         self::assertSame(['invalid_json' => 1], $health['udp']['rejected']);
     }
+
+    #[Test]
+    public function health_reports_an_empty_rejection_map_as_an_object(): void
+    {
+        $router = new Router(
+            storage:     $this->createStub(\LogService\Storage\StorageInterface::class),
+            hub:         new LogHub(''),
+            writeAuth:   new SingleKeyWriteAuth('test-secret'),
+            uiSecret:    'test-ui-secret',
+            storageType: 'file',
+            udpServer:   new \LogService\Udp\UdpLogServer(
+                new \LogService\Udp\UdpPacketValidator(fn(): ?string => null),
+                new \LogService\Ingest\EntrySink($this->createStub(\LogService\Storage\StorageInterface::class), new LogHub('')),
+            ),
+            udpConfig:   \LogService\Udp\UdpConfig::fromEnv([]),
+        );
+
+        $raw = (string) $router->handle(new ServerRequest('GET', 'http://localhost/api/health'))->getBody();
+
+        self::assertIsObject(json_decode($raw)->udp->rejected, 'serialised as {}, not []');
+    }
 }

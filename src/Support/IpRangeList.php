@@ -10,6 +10,9 @@ namespace LogService\Support;
  */
 final class IpRangeList
 {
+    /** First 12 bytes of an IPv4-mapped IPv6 address (::ffff:a.b.c.d). */
+    private const MAPPED_PREFIX = "\0\0\0\0\0\0\0\0\0\0\xFF\xFF";
+
     /** @var list<array{0: string, 1: int}> Packed network address + prefix length */
     private array $ranges = [];
 
@@ -88,7 +91,7 @@ final class IpRangeList
         }
 
         $packed = inet_pton($value);
-        if (strlen($packed) === 16 && str_starts_with($packed, str_repeat("\0", 10) . "\xFF\xFF")) {
+        if (strlen($packed) === 16 && str_starts_with($packed, self::MAPPED_PREFIX)) {
             return inet_ntop(substr($packed, 12));
         }
 
@@ -110,12 +113,19 @@ final class IpRangeList
 
         $max = strlen($packed) * 8;
         if ($bits === null) {
-            return [$packed, $max];
+            $bits = (string) $max;
         }
         if (!ctype_digit($bits) || (int) $bits > $max) {
             return null;
         }
+        $bits = (int) $bits;
 
-        return [$packed, (int) $bits];
+        // ::ffff:a.b.c.d/96+ — store as the IPv4 range, because normalise()
+        // turns IPv4-mapped peers into plain IPv4 before they are matched.
+        if (strlen($packed) === 16 && $bits >= 96 && str_starts_with($packed, self::MAPPED_PREFIX)) {
+            return [substr($packed, 12), $bits - 96];
+        }
+
+        return [$packed, $bits];
     }
 }

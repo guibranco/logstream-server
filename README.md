@@ -556,15 +556,16 @@ templates, ingest buffer, WebSocket feed, client last-seen, retention).
 | `key` | The app_key. MariaDB: a registered client; file mode: any name except `logstream-server` |
 | `ts` | Unix time in **milliseconds**; must be within `UDP_TIMESTAMP_WINDOW_MS` (±30 s) of the server — keep clocks NTP-synced |
 | `nonce` | 16–64 characters of `A-Z a-z 0-9 _ -`, unique per packet (e.g. 8 random bytes as hex) |
-| `sig` | `hex(HMAC-SHA256(secret, "{key}:{ts}:{nonce}:{log JSON}"))` |
+| `sig` | `hex(HMAC-SHA256(secret, "{key}:{ts}:{nonce}:{log}"))`, where `{log}` is the `log` JSON text exactly as it appears in the packet |
 | `log` | One entry, as in `POST /api/logs`: `app_id` (required), `level`, `category`, `message` or `message_template` + `context`, `trace_id`, `batch_id`, `user_agent`, `timestamp` |
 
 The **secret** is the client's `api_token` (MariaDB) or `API_SECRET` (file
 mode; UDP rejects everything while it is empty). It never travels on the wire.
-The **log JSON** in the signature is the `log` object exactly as you put it in
-the packet: compact (no spaces), slashes and non-ASCII characters not escaped
-(PHP: `JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES`; Python:
-`json.dumps(log, separators=(",", ":"), ensure_ascii=False)`).
+For `{log}`, encode the `log` object once, sign that text, and embed the same
+text in the packet — any JSON encoder works, since the server checks the bytes
+it received. (If you pretty-print the packet, the server also accepts a
+signature over the compact form: no spaces, keys in the order sent, slashes
+and non-ASCII characters not escaped.)
 
 The server **never replies**. A packet that is too large, malformed, stale,
 replayed, unsigned or for an unknown/inactive client is dropped and counted in

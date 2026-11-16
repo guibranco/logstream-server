@@ -145,10 +145,9 @@ final class UdpPacketValidator
             return ValidationResult::fail(self::REASON_UNKNOWN_KEY, "unknown or inactive client '{$appKey}'");
         }
 
-        // 8. HMAC — over the log object as sent ({} stays {}), see canonical().
-        $logObject = json_decode($raw)->log;
-        $expected  = hash_hmac('sha256', self::canonical($appKey, $ts, $nonce, $logObject), $token);
-        if (!hash_equals($expected, strtolower($data['sig']))) {
+        // 8. HMAC — over the log text exactly as sent, or else the compact
+        //    re-encoding of it (see canonical()); either must match.
+        if (!$this->signatureMatches($raw, $appKey, $ts, $nonce, strtolower($data['sig']), $token)) {
             return ValidationResult::fail(self::REASON_BAD_SIGNATURE, 'HMAC mismatch');
         }
 
@@ -162,9 +161,13 @@ final class UdpPacketValidator
     }
 
     /**
-     * The string both sides sign: "{key}:{ts}:{nonce}:{log as JSON}", where the
-     * JSON uses JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES, no whitespace,
-     * keys in the order sent.
+     * The string both sides sign: "{key}:{ts}:{nonce}:{log}".
+     *
+     * {log} is the `log` value exactly as it appears in the packet (what
+     * clients naturally sign: the JSON text they embed). As a fallback the
+     * server also accepts the compact re-encoding built here — no whitespace,
+     * keys in the order sent, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES,
+     * zero fractions kept — for clients that pretty-print the packet.
      *
      * @param array<string, mixed>|object $log
      */
@@ -174,16 +177,139 @@ final class UdpPacketValidator
             . json_encode($log, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRESERVE_ZERO_FRACTION);
     }
 
-    /** Drop expired nonces. Runs on each packet; costs only what has expired. */
+    /**
+     * Drop expired nonces. Runs on each packet; costs only what has expired.
+     * A nonce is kept up to and including its expiry, so a packet stamped at
+     * the far edge of the window can't be replayed at the exact moment its
+     * nonce would otherwise be forgotten.
+     */
     public function pruneExpired(?int $nowMs = null): void
     {
         $nowMs ??= ($this->clock)();
         foreach ($this->nonces as $key => $expiry) {
-            if ($expiry > $nowMs) {
+            if ($expiry >= $nowMs) {
                 break;
             }
             unset($this->nonces[$key]);
         }
+    }
+
+    private function signatureMatches(string $raw, string $appKey, int $ts, string $nonce, string $sig, string $token): bool
+    {
+        $prefix = $appKey . ':' . $ts . ':' . $nonce . ':';
+
+        $rawLog = self::rawLogValue($raw);
+        if ($rawLog !== null && hash_equals(hash_hmac('sha256', $prefix . $rawLog, $token), $sig)) {
+            return true;
+        }
+
+        // Objects keep {} as {} (an associative decode would turn it into []).
+        // Some valid JSON can't be decoded to objects (e.g. a property name
+        // starting with a NUL byte): then only the raw text can match.
+        $decoded = json_decode($raw);
+        if (!is_object($decoded) || !isset($decoded->log) || !is_object($decoded->log)) {
+            return false;
+        }
+
+        return hash_equals(hash_hmac('sha256', self::canonical($appKey, $ts, $nonce, $decoded->log), $token), $sig);
+    }
+
+    /**
+     * The raw JSON text of the top-level "log" value (the last one, as
+     * json_decode() keeps the last of duplicate keys), or null. Only called on
+     * a packet json_decode() has already accepted, so it can be lenient.
+     */
+    public static function rawLogValue(string $raw): ?string
+    {
+        $len = strlen($raw);
+        $i   = self::skipWhitespace($raw, 0, $len);
+        if ($i >= $len || $raw[$i] !== '{') {
+            return null;
+        }
+        $i++;
+        $found = null;
+
+        while (true) {
+            $i = self::skipWhitespace($raw, $i, $len);
+            if ($i >= $len || $raw[$i] === '}') {
+                return $found;
+            }
+            if ($raw[$i] !== '"') {
+                return null;
+            }
+            $keyEnd = self::skipString($raw, $i, $len);
+            $key    = json_decode(substr($raw, $i, $keyEnd - $i));
+            $i      = self::skipWhitespace($raw, $keyEnd, $len);
+            if ($i >= $len || $raw[$i] !== ':') {
+                return null;
+            }
+            $start = self::skipWhitespace($raw, $i + 1, $len);
+            $end   = self::skipValue($raw, $start, $len);
+            if ($key === 'log') {
+                $found = substr($raw, $start, $end - $start);
+            }
+            $i = self::skipWhitespace($raw, $end, $len);
+            if ($i < $len && $raw[$i] === ',') {
+                $i++;
+            }
+        }
+    }
+
+    private static function skipWhitespace(string $raw, int $i, int $len): int
+    {
+        while ($i < $len && ($raw[$i] === ' ' || $raw[$i] === "\t" || $raw[$i] === "\n" || $raw[$i] === "\r")) {
+            $i++;
+        }
+        return $i;
+    }
+
+    /** $i is on the opening quote; returns the index after the closing one. */
+    private static function skipString(string $raw, int $i, int $len): int
+    {
+        for ($i++; $i < $len; $i++) {
+            if ($raw[$i] === '\\') {
+                $i++;
+            } elseif ($raw[$i] === '"') {
+                return $i + 1;
+            }
+        }
+        return $len;
+    }
+
+    /** Returns the index just after the value starting at $i. */
+    private static function skipValue(string $raw, int $i, int $len): int
+    {
+        if ($i >= $len) {
+            return $len;
+        }
+        if ($raw[$i] === '"') {
+            return self::skipString($raw, $i, $len);
+        }
+        if ($raw[$i] === '{' || $raw[$i] === '[') {
+            $depth = 0;
+            while ($i < $len) {
+                $c = $raw[$i];
+                if ($c === '"') {
+                    $i = self::skipString($raw, $i, $len);
+                    continue;
+                }
+                if ($c === '{' || $c === '[') {
+                    $depth++;
+                } elseif ($c === '}' || $c === ']') {
+                    $depth--;
+                    if ($depth === 0) {
+                        return $i + 1;
+                    }
+                }
+                $i++;
+            }
+            return $len;
+        }
+        // Number, true, false, null
+        while ($i < $len && !in_array($raw[$i], [',', '}', ']', ' ', "\t", "\n", "\r"], true)) {
+            $i++;
+        }
+        return $i;
     }
 
     public function nonceCount(): int
