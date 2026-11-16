@@ -36,6 +36,16 @@ final class EntryFactoryTest extends TestCase
     }
 
     #[Test]
+    public function transport_comes_from_the_caller_not_the_payload(): void
+    {
+        [$udp]  = EntryFactory::build([['message' => 'm', 'transport' => 'tcp']], false, null, 'k', 'w', null, null, null, 'udp');
+        [$none] = EntryFactory::build([['message' => 'm', 'transport' => 'udp']], false, null, 'k', 'w', null, null, null);
+
+        self::assertSame('udp', $udp[0]->transport);
+        self::assertNull($none[0]->transport);
+    }
+
+    #[Test]
     public function resolved_app_key_wins_unless_single_key(): void
     {
         [$db] = EntryFactory::build([['message' => 'm', 'app_key' => 'spoofed']], false, null, 'billing-api', 'w', null, null, null);

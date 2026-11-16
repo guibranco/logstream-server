@@ -231,6 +231,23 @@ final class LogEntryTest extends TestCase
         self::assertNull($entry->senderIp);
     }
 
+    #[Test]
+    public function it_round_trips_the_transport(): void
+    {
+        $entry = LogEntry::fromArray(array_merge($this->fixture(), ['transport' => 'udp']));
+
+        self::assertSame('udp', $entry->transport);
+        self::assertSame('udp', $entry->toArray()['transport']);
+    }
+
+    #[Test]
+    public function it_defaults_transport_to_null_for_legacy_or_unknown_values(): void
+    {
+        self::assertNull(LogEntry::fromArray($this->fixture())->transport);
+        self::assertArrayHasKey('transport', LogEntry::fromArray($this->fixture())->toArray());
+        self::assertNull(LogEntry::fromArray(array_merge($this->fixture(), ['transport' => 'carrier-pigeon']))->transport);
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────

@@ -168,6 +168,7 @@ final class UdpLogServer
             topUserAgent:   is_string($log['user_agent'] ?? null) ? $log['user_agent'] : 'udp-client',
             topBatchId:     null,
             senderIp:       $ip,
+            transport:      'udp',
         );
 
         if ($entries === []) {

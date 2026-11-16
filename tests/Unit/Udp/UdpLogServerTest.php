@@ -104,6 +104,7 @@ final class UdpLogServerTest extends TestCase
         self::assertSame('trace-1', $entry->traceId);
         self::assertSame('udp-client', $entry->userAgent);
         self::assertSame('10.0.0.7', $entry->senderIp);
+        self::assertSame('udp', $entry->transport);
         self::assertSame(['received' => 1, 'accepted' => 1, 'dropped' => 0, 'rejected' => [], 'nonces' => 1], $server->stats());
     }
 

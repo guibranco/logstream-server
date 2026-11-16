@@ -20,7 +20,7 @@ final class MariaDBStorage implements StorageInterface
     /** Columns written for every entry, in the order of {@see self::row()}. */
     public const INSERT_COLUMNS = [
         'id', 'trace_id', 'batch_id', 'app_key', 'app_id',
-        'user_agent', 'sender_ip', 'level', 'category', 'message', 'message_template',
+        'user_agent', 'sender_ip', 'transport', 'level', 'category', 'message', 'message_template',
         'context', 'timestamp', 'created_at',
     ];
 
@@ -91,6 +91,7 @@ final class MariaDBStorage implements StorageInterface
             $entry->appId,
             $entry->userAgent,
             $entry->senderIp,
+            $entry->transport,
             $entry->level,
             $entry->category,
             $entry->message,
@@ -187,6 +188,7 @@ final class MariaDBStorage implements StorageInterface
             'trace_id' => ':trace_id',
             'batch_id' => ':batch_id',
             'sender_ip' => ':sender_ip',
+            'transport' => ':transport',
             'message_template' => ':message_template',
         ];
 

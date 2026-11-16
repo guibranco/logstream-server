@@ -10,6 +10,8 @@ namespace LogService\Models;
 final class LogEntry
 {
     public const LEVELS = ['debug', 'info', 'notice', 'warning', 'error', 'critical'];
+    /** How an entry reached the server: HTTP (POST /api/logs) is TCP, the UDP listener is UDP. */
+    public const TRANSPORTS = ['tcp', 'udp'];
     public const MAX_CATEGORY_LENGTH = 100;
     public const MAX_APP_KEY_LENGTH  = 100;
 
@@ -42,6 +44,8 @@ final class LogEntry
         public readonly ?string $senderIp = null,
         /** The message template the message was rendered from, when there was one */
         public readonly ?string $messageTemplate = null,
+        /** Network transport the entry arrived over (tcp|udp); null for server-generated or legacy entries */
+        public readonly ?string $transport = null,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -63,6 +67,7 @@ final class LogEntry
             createdAt: self::parseDate($d['created_at'] ?? 'now'),
             senderIp:  self::parseIp($d['sender_ip'] ?? null),
             messageTemplate: self::parseTemplate($d['message_template'] ?? null),
+            transport: self::parseTransport($d['transport'] ?? null),
         );
     }
 
@@ -83,6 +88,7 @@ final class LogEntry
             'timestamp'  => $this->timestamp->format(\DateTimeInterface::RFC3339_EXTENDED),
             'created_at' => $this->createdAt->format(\DateTimeInterface::RFC3339_EXTENDED),
             'sender_ip'  => $this->senderIp,
+            'transport'  => $this->transport,
         ];
     }
 
@@ -106,6 +112,11 @@ final class LogEntry
     private static function parseTemplate(mixed $value): ?string
     {
         return is_string($value) && $value !== '' ? $value : null;
+    }
+
+    private static function parseTransport(mixed $value): ?string
+    {
+        return is_string($value) && in_array($value, self::TRANSPORTS, true) ? $value : null;
     }
 
     private static function parseIp(mixed $value): ?string

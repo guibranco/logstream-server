@@ -192,6 +192,7 @@ See [Ingest modes](#ingest-modes) for when each is returned.
 | `trace_id`   | string | Exact match                                |
 | `batch_id`   | string | Exact match                                |
 | `sender_ip`  | string | Exact match                                |
+| `transport`  | string | `tcp\|udp` (exact match, repeatable)       |
 | `date_from`  | string | ISO 8601 timestamp (inclusive)             |
 | `date_to`    | string | ISO 8601 timestamp (inclusive)             |
 | `range`      | string | Relative range ending now, replaces `date_from`/`date_to`: `<n>m`, `<n>h`, `<n>d`, `<n>w` (e.g. `15m`, `60d`, `90d`, `365d`), `week` (since Sunday 00:00), `month` (since the 1st, 00:00) or `now` (only new entries) |
@@ -308,6 +309,7 @@ Connect from the UI to receive a live stream of every ingested log.
 | `timestamp`  | ISO 8601        | When the event occurred                |
 | `created_at` | ISO 8601        | When the server persisted it           |
 | `sender_ip`  | string?         | Client IP, captured by the server (see below) |
+| `transport`  | `tcp\|udp`?     | How the entry arrived: `tcp` (HTTP) or `udp`, set by the server |
 
 ### Sender IP
 
@@ -327,6 +329,17 @@ TRUSTED_PROXIES=172.16.0.0/12            # Nginx container on a Docker network
 
 In MariaDB mode, apply `migrations/005_sender_ip.sql` to add the column.
 Entries stored before that keep `sender_ip: null`.
+
+### Transport
+
+Every ingested entry also records how it reached the server as `transport`:
+`tcp` for HTTP ingestion (`POST /api/logs`, including the demo page) and `udp`
+for the UDP listener. Like `sender_ip` it is set by the server and a
+`transport` in the payload is ignored. The server's own logs
+(`logstream-server`) are generated in-process and keep `transport: null`.
+
+In MariaDB mode, apply `migrations/009_transport.sql` to add the column.
+Entries stored before that keep `transport: null`.
 
 ### Ingest modes
 
