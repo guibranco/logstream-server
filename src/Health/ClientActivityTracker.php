@@ -64,6 +64,12 @@ final class ClientActivityTracker
         }
     }
 
+    /** Drop the unwritten time of a deleted client, so a new client with the same app_key starts unseen. */
+    public function forget(string $appKey): void
+    {
+        unset($this->pending[$appKey]);
+    }
+
     /** Newest seen time not yet written for this app_key, or null. */
     public function lastSeen(string $appKey): ?\DateTimeImmutable
     {

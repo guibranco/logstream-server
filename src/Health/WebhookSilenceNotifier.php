@@ -5,31 +5,23 @@ declare(strict_types=1);
 namespace LogService\Health;
 
 use React\Http\Browser;
+use React\Promise\PromiseInterface;
 
 /**
  * POSTs silence alerts as JSON to a webhook URL (CLIENT_SILENCE_WEBHOOK_URL).
- * Non-blocking: the request runs on the event loop and a failure is only logged.
+ * Non-blocking: the request runs on the event loop; ClientSilenceMonitor logs
+ * a failure and retries on its next check.
  */
 final class WebhookSilenceNotifier implements SilenceNotifierInterface
 {
-    /** @var \Closure(string, string, array<string, mixed>): void */
-    private readonly \Closure $log;
-
-    /**
-     * @param (callable(string, string, array<string, mixed>): void)|null $log
-     */
     public function __construct(
         private readonly string  $url,
         private readonly Browser $browser = new Browser(),
-        ?callable $log = null,
         private readonly float   $timeoutSeconds = 10.0,
     ) {
         if (!self::isValidUrl($url)) {
             throw new \InvalidArgumentException('Webhook URL must be an absolute http(s) URL.');
         }
-        $this->log = $log !== null
-            ? \Closure::fromCallable($log)
-            : static function (string $level, string $message, array $context = []): void {};
     }
 
     public static function isValidUrl(string $url): bool
@@ -38,24 +30,15 @@ final class WebhookSilenceNotifier implements SilenceNotifierInterface
         return filter_var($url, FILTER_VALIDATE_URL) !== false && in_array($scheme, ['http', 'https'], true);
     }
 
-    public function notify(array $payload): void
+    /** Fulfils on a 2XX/3XX response; rejects on a network error, timeout or 4XX/5XX. */
+    public function notify(array $payload): PromiseInterface
     {
-        $appKey = (string) ($payload['app_key'] ?? '');
-
-        $this->browser
+        return $this->browser
             ->withTimeout($this->timeoutSeconds)
             ->post(
                 $this->url,
                 ['Content-Type' => 'application/json', 'User-Agent' => 'logstream-server'],
                 json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR),
-            )
-            ->then(
-                null,
-                function (\Throwable $e) use ($appKey): void {
-                    ($this->log)('error', "Silence webhook for '{$appKey}' failed: " . $e->getMessage(), [
-                        'app_key' => $appKey,
-                    ]);
-                },
             );
     }
 }

@@ -2274,6 +2274,41 @@ paths:
         "503":
           $ref: '#/components/responses/ClientsUnavailable'
 
+    delete:
+      operationId: deleteClient
+      summary: Delete a client application and its logs
+      description: |
+        Permanently deletes the client AND all `log_entries` rows associated
+        with its `app_key` in a single database transaction.
+
+        The auth cache is flushed immediately so the old credentials stop
+        working at once.
+
+        **This action is irreversible.**
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Applications]
+      security:
+        - ReadKey: []
+      parameters:
+        - $ref: '#/components/parameters/ClientKey'
+      responses:
+        "200":
+          description: Client and associated log entries deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientDeletedResponse'
+              example:
+                deleted: billing-api
+                logs_deleted: 1842
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "503":
+          $ref: '#/components/responses/ClientsUnavailable'
+
   /api/clients/{app_key}/health:
     get:
       operationId: getClientHealth
@@ -2312,41 +2347,6 @@ paths:
           $ref: '#/components/responses/NotFound'
         "405":
           description: Method not allowed (only GET).
-        "503":
-          $ref: '#/components/responses/ClientsUnavailable'
-
-    delete:
-      operationId: deleteClient
-      summary: Delete a client application and its logs
-      description: |
-        Permanently deletes the client AND all `log_entries` rows associated
-        with its `app_key` in a single database transaction.
-
-        The auth cache is flushed immediately so the old credentials stop
-        working at once.
-
-        **This action is irreversible.**
-
-        Requires `Authorization: Bearer <UI_SECRET>`.
-      tags: [Applications]
-      security:
-        - ReadKey: []
-      parameters:
-        - $ref: '#/components/parameters/ClientKey'
-      responses:
-        "200":
-          description: Client and associated log entries deleted.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ClientDeletedResponse'
-              example:
-                deleted: billing-api
-                logs_deleted: 1842
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "404":
-          $ref: '#/components/responses/NotFound'
         "503":
           $ref: '#/components/responses/ClientsUnavailable'
 

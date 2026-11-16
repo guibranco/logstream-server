@@ -393,7 +393,7 @@ if ($clientActivity !== null) {
             $checkSeconds   = max(5.0, (float) ($_ENV['CLIENT_HEALTH_CHECK_SECONDS'] ?? ClientSilenceMonitor::DEFAULT_INTERVAL_SECONDS));
             $silenceMonitor = new ClientSilenceMonitor(
                 $clientRepository,
-                new WebhookSilenceNotifier($silenceWebhook, log: $logger->channel('clients')),
+                new WebhookSilenceNotifier($silenceWebhook),
                 $clientActivity,
                 log: $logger->channel('clients'),
             );

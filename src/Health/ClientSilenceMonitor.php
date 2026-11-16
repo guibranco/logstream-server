@@ -12,8 +12,13 @@ use React\EventLoop\TimerInterface;
 /**
  * Dead-client detection: every check() loads the clients and sends one alert
  * per silence episode for each enabled client with a heartbeat timeout that
- * has gone silent. Once the client sends again (status back to active) the
- * next silence alerts again.
+ * has gone silent. An episode is identified by the last-seen time it started
+ * from: once the client sends again — even if it falls silent again before
+ * the next check — the new silence alerts again.
+ *
+ * A client counts as alerted only once delivery succeeds; a failed delivery
+ * is retried on the next check, and no second alert is sent while one is
+ * still in flight.
  *
  * Episodes are remembered in memory only, so a client that is still silent
  * when the server restarts is reported once more after the restart.
@@ -23,8 +28,11 @@ final class ClientSilenceMonitor
     public const DEFAULT_INTERVAL_SECONDS = 30.0;
     public const ALERT_NAME               = 'client-silent';
 
-    /** @var array<string, true> app_keys already alerted for the current silence */
+    /** @var array<string, ?\DateTimeImmutable> app_key => last-seen time of the silence already alerted */
     private array $alerted = [];
+
+    /** @var array<string, true> app_keys with a delivery in progress */
+    private array $inFlight = [];
 
     private ?TimerInterface $timer = null;
 
@@ -56,7 +64,7 @@ final class ClientSilenceMonitor
     /**
      * Run one check.
      *
-     * @return list<array<string, mixed>> The alerts sent by this check.
+     * @return list<array<string, mixed>> The alerts whose delivery this check started.
      */
     public function check(): array
     {
@@ -73,31 +81,21 @@ final class ClientSilenceMonitor
         $seen = [];
 
         foreach ($clients as $client) {
-            $seen[$client->appKey] = true;
-            $health = $client->health($now, $this->newestSeen($client));
+            $key        = $client->appKey;
+            $seen[$key] = true;
+            $health     = $client->health($now, $this->newestSeen($client));
 
             if (!$client->active || !$health->isSilent()) {
-                unset($this->alerted[$client->appKey]);
+                unset($this->alerted[$key]);
                 continue;
             }
-            if (isset($this->alerted[$client->appKey])) {
+            if (isset($this->inFlight[$key]) || $this->alreadyAlerted($key, $health->lastSeen)) {
                 continue;
             }
 
             $payload = self::payload($client, $health, $now);
-            try {
-                $this->notifier->notify($payload);
-                $this->alerted[$client->appKey] = true;
+            if ($this->send($key, $health->lastSeen, $payload)) {
                 $sent[] = $payload;
-                ($this->log)('warning', "Client '{$client->appKey}' is silent ({$payload['silent_for']})", [
-                    'app_key'         => $client->appKey,
-                    'timeout_minutes' => $health->timeoutMinutes,
-                ]);
-            } catch (\Throwable $e) {
-                // Not marked as alerted: the next check tries again.
-                ($this->log)('error', "Silence alert for '{$client->appKey}' failed: " . $e->getMessage(), [
-                    'app_key' => $client->appKey,
-                ]);
             }
         }
 
@@ -105,6 +103,54 @@ final class ClientSilenceMonitor
         $this->alerted = array_intersect_key($this->alerted, $seen);
 
         return $sent;
+    }
+
+    /** Whether this silence (identified by its last-seen time) was already delivered. */
+    private function alreadyAlerted(string $key, ?\DateTimeImmutable $lastSeen): bool
+    {
+        if (!array_key_exists($key, $this->alerted)) {
+            return false;
+        }
+        $alertedFor = $this->alerted[$key];
+        // Seen again since that alert: a new silence episode.
+        return !($lastSeen !== null && $alertedFor !== null && $lastSeen > $alertedFor);
+    }
+
+    /**
+     * Starts delivery. Marks the client alerted when it succeeds; a failure
+     * leaves it unmarked so the next check retries.
+     *
+     * @param array<string, mixed> $payload
+     * @return bool Whether delivery was started.
+     */
+    private function send(string $key, ?\DateTimeImmutable $lastSeen, array $payload): bool
+    {
+        $onFailure = function (\Throwable $e) use ($key): void {
+            unset($this->inFlight[$key]);
+            ($this->log)('error', "Silence alert for '{$key}' failed: " . $e->getMessage(), ['app_key' => $key]);
+        };
+
+        $this->inFlight[$key] = true;
+        try {
+            $promise = $this->notifier->notify($payload);
+        } catch (\Throwable $e) {
+            $onFailure($e);
+            return false;
+        }
+
+        $promise->then(
+            function () use ($key, $lastSeen, $payload): void {
+                unset($this->inFlight[$key]);
+                $this->alerted[$key] = $lastSeen;
+                ($this->log)('warning', "Client '{$key}' is silent ({$payload['silent_for']})", [
+                    'app_key'         => $key,
+                    'timeout_minutes' => $payload['timeout_minutes'],
+                ]);
+            },
+            $onFailure,
+        );
+
+        return true;
     }
 
     /**

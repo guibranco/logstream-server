@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace LogService\Tests\Unit\Http;
 
 use GuzzleHttp\Psr7\Utils;
+use LogService\Auth\CacheFlushableInterface;
 use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Health\ClientActivityTracker;
 use LogService\Http\Router;
@@ -41,6 +42,7 @@ final class ClientHealthEndpointsTest extends TestCase
         ?ClientActivityTracker $activity    = null,
         string                 $storageType = 'mariadb',
         ?StorageInterface      $storage     = null,
+        ?CacheFlushableInterface $writeAuthDb = null,
     ): Router {
         return new Router(
             storage:          $storage ?? $this->createStub(StorageInterface::class),
@@ -50,6 +52,7 @@ final class ClientHealthEndpointsTest extends TestCase
             storageType:      $storageType,
             clientRepository: $repo,
             clientActivity:   $activity,
+            writeAuthDb:      $writeAuthDb,
         );
     }
 
@@ -303,6 +306,38 @@ final class ClientHealthEndpointsTest extends TestCase
         $response = $router->handle($request);
 
         self::assertSame(400, $response->getStatusCode());
+        self::assertNull($activity->lastSeen('billing-api'));
+    }
+
+    #[Test]
+    public function failed_timeout_update_still_flushes_the_auth_cache(): void
+    {
+        $repo = $this->createStub(ClientRepository::class);
+        $repo->method('findByKey')->willReturn($this->client());
+        $repo->method('update')->willReturn($this->client());
+        $repo->method('setHeartbeatTimeout')->willThrowException(new \RuntimeException('db gone away'));
+
+        $writeAuthDb = $this->createMock(CacheFlushableInterface::class);
+        $writeAuthDb->expects(self::once())->method('flushCache');
+
+        $response = $this->router($repo, writeAuthDb: $writeAuthDb)->handle(
+            $this->authed('PUT', '/api/clients/billing-api', json_encode(['active' => false, 'heartbeat_timeout_min' => 5]))
+        );
+
+        self::assertSame(400, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function delete_forgets_unwritten_activity(): void
+    {
+        $repo = $this->createStub(ClientRepository::class);
+        $repo->method('delete')->willReturn(0);
+        $activity = new ClientActivityTracker($repo);
+        $activity->touch('billing-api');
+
+        $response = $this->router($repo, $activity)->handle($this->authed('DELETE', '/api/clients/billing-api'));
+
+        self::assertSame(200, $response->getStatusCode());
         self::assertNull($activity->lastSeen('billing-api'));
     }
 }

@@ -1038,6 +1038,8 @@ final class Router
                 $updated = $this->clientRepository->setHeartbeatTimeout($appKey, $timeout);
             }
         } catch (\RuntimeException $e) {
+            // update() may already have deactivated the client: drop cached tokens anyway.
+            $this->writeAuthDb?->flushCache();
             return $this->json(['error' => $e->getMessage()], 400, $cors);
         }
         $this->writeAuthDb?->flushCache();
@@ -1069,6 +1071,7 @@ final class Router
             return $this->json(['error' => $e->getMessage()], 404, $cors);
         }
         $this->writeAuthDb?->flushCache();
+        $this->clientActivity?->forget($appKey);
         return $this->json(['deleted' => $appKey, 'logs_deleted' => $logsDeleted], 200, $cors);
     }
 

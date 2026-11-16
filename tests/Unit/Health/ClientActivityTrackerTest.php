@@ -84,4 +84,16 @@ final class ClientActivityTrackerTest extends TestCase
         self::assertSame('warning', $logs[0][0]);
         self::assertStringContainsString('gone away', $logs[0][1]);
     }
+
+    #[Test]
+    public function forget_drops_the_pending_time(): void
+    {
+        $tracker = $this->tracker($this->createStub(ClientRepository::class));
+        $tracker->touch('billing-api', 'auth-service');
+
+        $tracker->forget('billing-api');
+
+        self::assertNull($tracker->lastSeen('billing-api'));
+        self::assertSame(1, $tracker->pendingCount());
+    }
 }

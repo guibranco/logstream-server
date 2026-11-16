@@ -11,6 +11,11 @@ use LogService\Repository\Client;
 use LogService\Repository\ClientRepository;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
+use React\Promise\Deferred;
+use React\Promise\PromiseInterface;
+
+use function React\Promise\reject;
+use function React\Promise\resolve;
 
 final class ClientSilenceMonitorTest extends TestCase
 {
@@ -54,9 +59,10 @@ final class ClientSilenceMonitorTest extends TestCase
 
         $notifier ??= new class ($this->sent) implements SilenceNotifierInterface {
             public function __construct(private array &$sent) {}
-            public function notify(array $payload): void
+            public function notify(array $payload): PromiseInterface
             {
                 $this->sent[] = $payload;
+                return resolve(null);
             }
         };
 
@@ -129,11 +135,12 @@ final class ClientSilenceMonitorTest extends TestCase
         $calls    = 0;
         $notifier = new class ($calls) implements SilenceNotifierInterface {
             public function __construct(private int &$calls) {}
-            public function notify(array $payload): void
+            public function notify(array $payload): PromiseInterface
             {
                 if (++$this->calls === 1) {
                     throw new \RuntimeException('webhook down');
                 }
+                return resolve(null);
             }
         };
         $monitor       = $this->monitor(notifier: $notifier);
@@ -156,5 +163,69 @@ final class ClientSilenceMonitorTest extends TestCase
         );
 
         self::assertSame([], $monitor->check());
+    }
+
+    #[Test]
+    public function new_silence_after_activity_between_checks_alerts_again(): void
+    {
+        $monitor       = $this->monitor();
+        $this->clients = [$this->client('billing-api', '2026-04-17T16:00:00Z', 1)];
+        self::assertCount(1, $monitor->check());
+
+        // Sent again at 16:58 and silent again by the next check: no "active" check in between.
+        $this->clients = [$this->client('billing-api', '2026-04-17T16:58:00Z', 1)];
+        self::assertCount(1, $monitor->check(), 'new episode');
+        self::assertCount(0, $monitor->check(), 'same episode');
+    }
+
+    #[Test]
+    public function rejected_delivery_is_retried_next_check(): void
+    {
+        $calls    = 0;
+        $notifier = new class ($calls) implements SilenceNotifierInterface {
+            public function __construct(private int &$calls) {}
+            public function notify(array $payload): PromiseInterface
+            {
+                return ++$this->calls === 1 ? reject(new \RuntimeException('HTTP 502')) : resolve(null);
+            }
+        };
+        $logs    = [];
+        $repo    = $this->createStub(ClientRepository::class);
+        $repo->method('all')->willReturnCallback(fn() => $this->clients);
+        $monitor = new ClientSilenceMonitor($repo, $notifier, null, fn() => $this->now,
+            function (string $level, string $message) use (&$logs): void { $logs[] = [$level, $message]; });
+        $this->clients = [$this->client('billing-api', '2026-04-17T16:00:00Z', 10)];
+
+        $monitor->check();
+        $monitor->check();
+        $monitor->check();
+
+        self::assertSame(2, $calls, 'retried once after the rejection, then alerted');
+        self::assertSame('error', $logs[0][0]);
+        self::assertStringContainsString('HTTP 502', $logs[0][1]);
+    }
+
+    #[Test]
+    public function no_second_alert_while_one_is_in_flight(): void
+    {
+        $deferred = new Deferred();
+        $calls    = 0;
+        $notifier = new class ($calls, $deferred) implements SilenceNotifierInterface {
+            public function __construct(private int &$calls, private Deferred $deferred) {}
+            public function notify(array $payload): PromiseInterface
+            {
+                ++$this->calls;
+                return $this->deferred->promise();
+            }
+        };
+        $monitor       = $this->monitor(notifier: $notifier);
+        $this->clients = [$this->client('billing-api', '2026-04-17T16:00:00Z', 10)];
+
+        $monitor->check();
+        $monitor->check();
+        $deferred->resolve(null);
+        $monitor->check();
+
+        self::assertSame(1, $calls);
     }
 }
