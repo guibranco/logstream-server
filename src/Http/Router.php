@@ -7,11 +7,14 @@ namespace LogService\Http;
 use LogService\Auth\CacheFlushableInterface;
 use LogService\Auth\WriteAuthInterface;
 use LogService\Demo\DemoTraffic;
+use LogService\Health\ClientActivityTracker;
+use LogService\Health\ClientHealth;
 use LogService\Ingest\IngestBuffer;
 use LogService\Ingest\IngestConfig;
 use LogService\Logging\SelfLogConfig;
 use LogService\Models\LogEntry;
 use LogService\Models\MessageTemplate;
+use LogService\Repository\Client;
 use LogService\Repository\ClientRepository;
 use LogService\Retention\RetentionPolicy;
 use LogService\Retention\RetentionPolicyRepositoryInterface;
@@ -77,6 +80,8 @@ final class Router
         private readonly bool                                $selfLogging       = false,
         /** DEMO_MODE: serves /demo and /api/demo/* (fake traffic). 404 otherwise. */
         private readonly bool                                $demoMode          = false,
+        /** Records last-seen times on ingestion (MariaDB only). Buffered writes are recorded by the buffer's onPersisted callback. */
+        private readonly ?ClientActivityTracker              $clientActivity    = null,
     ) {}
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -154,6 +159,16 @@ final class Router
                 'POST'  => $this->handleClientCreate($request, $cors),
                 default => $this->json(['error' => 'Method not allowed'], 405, $cors),
             };
+        }
+
+        if (preg_match('#^/api/clients/([^/]+)/health$#', $path, $m)) {
+            if (!$this->isReadAuthorised($request)) {
+                return $this->json(['error' => 'Unauthorized'], 401, $cors);
+            }
+            if ($method !== 'GET') {
+                return $this->json(['error' => 'Method not allowed'], 405, $cors);
+            }
+            return $this->handleClientHealth(urldecode($m[1]), $cors);
         }
 
         // /rotate must be matched before the generic /{key} pattern
@@ -674,6 +689,10 @@ final class Router
             }
         }
 
+        if ($saved !== []) {
+            $this->clientActivity?->touch(...array_column($saved, 'app_key'));
+        }
+
         $status = empty($saved) ? 400 : 201;
 
         return $this->json([
@@ -883,7 +902,7 @@ final class Router
             return $this->dbOnlyError($cors);
         }
         return $this->json([
-            'clients' => array_map(fn($c) => $c->toPublicArray(), $this->clientRepository->all()),
+            'clients' => array_map(fn(Client $c) => $this->publicClient($c), $this->clientRepository->all()),
         ], 200, $cors);
     }
 
@@ -896,7 +915,66 @@ final class Router
         if ($client === null) {
             return $this->json(['error' => "Client '{$appKey}' not found."], 404, $cors);
         }
-        return $this->json($client->toPublicArray(), 200, $cors);
+        return $this->json($this->publicClient($client), 200, $cors);
+    }
+
+    /** GET /api/clients/{app_key}/health */
+    private function handleClientHealth(string $appKey, array $cors): Response
+    {
+        if ($this->clientRepository === null) {
+            return $this->dbOnlyError($cors);
+        }
+        $client = $this->clientRepository->findByKey($appKey);
+        if ($client === null) {
+            return $this->json(['error' => "Client '{$appKey}' not found."], 404, $cors);
+        }
+
+        $client = $this->withPendingLastSeen($client);
+        $health = $client->health(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+
+        return $this->json(['app_key' => $client->appKey] + $health->toArray(), 200, $cors);
+    }
+
+    /** Public client fields, with a last-seen time that may not be written yet. */
+    private function publicClient(Client $client): array
+    {
+        return $this->withPendingLastSeen($client)->toPublicArray();
+    }
+
+    private function withPendingLastSeen(Client $client): Client
+    {
+        $pending = $this->clientActivity?->lastSeen($client->appKey);
+        if ($pending === null || ($client->lastSeenAt !== null && $client->lastSeenAt >= $pending)) {
+            return $client;
+        }
+        return $client->withLastSeenAt($pending);
+    }
+
+    /**
+     * heartbeat_timeout_min from a PUT body: [present, value]. null or "" clears it.
+     *
+     * @return array{0: bool, 1: ?int}
+     * @throws \InvalidArgumentException when the value is not a whole number in range.
+     */
+    private static function parseHeartbeatTimeout(array $body): array
+    {
+        if (!array_key_exists('heartbeat_timeout_min', $body)) {
+            return [false, null];
+        }
+        $raw = $body['heartbeat_timeout_min'];
+        if ($raw === null || $raw === '') {
+            return [true, null];
+        }
+        $valid = (is_int($raw) || (is_string($raw) && ctype_digit($raw)))
+            && (int) $raw >= 1
+            && (int) $raw <= ClientHealth::MAX_TIMEOUT_MINUTES;
+        if (!$valid) {
+            throw new \InvalidArgumentException(
+                "'heartbeat_timeout_min' must be a whole number of minutes from 1 to "
+                . ClientHealth::MAX_TIMEOUT_MINUTES . ', or null to disable monitoring.'
+            );
+        }
+        return [true, (int) $raw];
     }
 
     private function handleClientCreate(ServerRequestInterface $request, array $cors): Response
@@ -941,7 +1019,8 @@ final class Router
         if ($existing === null) {
             return $this->json(['error' => "Client '{$appKey}' not found."], 404, $cors);
         }
-        $body   = json_decode((string) $request->getBody(), true) ?? [];
+        $body   = json_decode((string) $request->getBody(), true);
+        $body   = is_array($body) ? $body : [];
         $name   = trim($body['name'] ?? $existing->name);
         $active = isset($body['active']) ? (bool) $body['active'] : $existing->active;
 
@@ -949,12 +1028,20 @@ final class Router
             return $this->json(['error' => "'name' cannot be empty."], 422, $cors);
         }
         try {
+            [$hasTimeout, $timeout] = self::parseHeartbeatTimeout($body);
+        } catch (\InvalidArgumentException $e) {
+            return $this->json(['error' => $e->getMessage()], 422, $cors);
+        }
+        try {
             $updated = $this->clientRepository->update($appKey, $name, $active);
+            if ($hasTimeout && $timeout !== $existing->heartbeatTimeoutMin) {
+                $updated = $this->clientRepository->setHeartbeatTimeout($appKey, $timeout);
+            }
         } catch (\RuntimeException $e) {
             return $this->json(['error' => $e->getMessage()], 400, $cors);
         }
         $this->writeAuthDb?->flushCache();
-        return $this->json($updated->toPublicArray(), 200, $cors);
+        return $this->json($this->publicClient($updated), 200, $cors);
     }
 
     private function handleClientRotate(string $appKey, array $cors): Response

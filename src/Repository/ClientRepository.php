@@ -6,6 +6,7 @@ namespace LogService\Repository;
 
 use LogService\Auth\SecretGenerator;
 use LogService\Database\Connection;
+use LogService\Health\ClientHealth;
 
 /**
  * CRUD repository for the `clients` table.
@@ -21,6 +22,8 @@ use LogService\Database\Connection;
  */
 class ClientRepository
 {
+    private const COLUMNS = 'id, name, app_key, active, created_at, updated_at, last_seen_at, heartbeat_timeout_min';
+
     private readonly SecretGenerator $tokens;
 
     public function __construct(
@@ -34,7 +37,7 @@ class ClientRepository
     public function all(): array
     {
         $stmt = $this->db->pdo()->query(
-            'SELECT id, name, app_key, active, created_at, updated_at
+            'SELECT ' . self::COLUMNS . '
              FROM clients
              ORDER BY name ASC'
         );
@@ -48,7 +51,7 @@ class ClientRepository
     public function findByKey(string $appKey): ?Client
     {
         $stmt = $this->db->pdo()->prepare(
-            'SELECT id, name, app_key, active, created_at, updated_at
+            'SELECT ' . self::COLUMNS . '
              FROM clients
              WHERE app_key = :app_key
              LIMIT 1'
@@ -147,14 +150,78 @@ class ClientRepository
 
         $refreshed = $this->findByKey($appKey);
         return new Client(
-            id:        $refreshed->id,
-            name:      $refreshed->name,
-            appKey:    $refreshed->appKey,
-            active:    $refreshed->active,
-            createdAt: $refreshed->createdAt,
-            updatedAt: $refreshed->updatedAt,
-            rawToken:  $token,
+            id:                  $refreshed->id,
+            name:                $refreshed->name,
+            appKey:              $refreshed->appKey,
+            active:              $refreshed->active,
+            createdAt:           $refreshed->createdAt,
+            updatedAt:           $refreshed->updatedAt,
+            rawToken:            $token,
+            lastSeenAt:          $refreshed->lastSeenAt,
+            heartbeatTimeoutMin: $refreshed->heartbeatTimeoutMin,
         );
+    }
+
+    /**
+     * Set or clear (null) the heartbeat timeout of a client, in minutes.
+     *
+     * @throws \RuntimeException when the app_key is not found.
+     * @throws \InvalidArgumentException when the timeout is out of range.
+     */
+    public function setHeartbeatTimeout(string $appKey, ?int $minutes): Client
+    {
+        if ($minutes !== null && ($minutes < 1 || $minutes > ClientHealth::MAX_TIMEOUT_MINUTES)) {
+            throw new \InvalidArgumentException(
+                'heartbeat_timeout_min must be between 1 and ' . ClientHealth::MAX_TIMEOUT_MINUTES . ', or null.'
+            );
+        }
+        if ($this->findByKey($appKey) === null) {
+            throw new \RuntimeException("Client '{$appKey}' not found.");
+        }
+
+        $this->db->pdo()->prepare(
+            'UPDATE clients SET heartbeat_timeout_min = :minutes WHERE app_key = :app_key'
+        )->execute([
+            ':minutes' => $minutes,
+            ':app_key' => $appKey,
+        ]);
+
+        return $this->findByKey($appKey);
+    }
+
+    /**
+     * Record when clients were last seen. Each time only moves forward: an
+     * older value never overwrites a newer one. updated_at is left as it was
+     * (it tracks edits to the client, not its traffic).
+     *
+     * @param array<string, \DateTimeImmutable> $seen app_key => last seen
+     * @return int Rows updated (unknown app_keys are ignored).
+     */
+    public function touchLastSeen(array $seen): int
+    {
+        if ($seen === []) {
+            return 0;
+        }
+
+        $stmt = $this->db->pdo()->prepare(
+            'UPDATE clients
+             SET last_seen_at = :seen, updated_at = updated_at
+             WHERE app_key = :app_key
+               AND (last_seen_at IS NULL OR last_seen_at < :seen_cmp)'
+        );
+
+        $updated = 0;
+        foreach ($seen as $appKey => $at) {
+            $value = $at->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+            $stmt->execute([
+                ':seen'     => $value,
+                ':seen_cmp' => $value,
+                ':app_key'  => (string) $appKey,
+            ]);
+            $updated += $stmt->rowCount();
+        }
+
+        return $updated;
     }
 
     /**
@@ -208,6 +275,12 @@ class ClientRepository
             createdAt: (string)$row['created_at'],
             updatedAt: (string)$row['updated_at'],
             rawToken:  null,
+            lastSeenAt: ClientHealth::parseTimestamp(
+                isset($row['last_seen_at']) ? (string) $row['last_seen_at'] : null,
+            ),
+            heartbeatTimeoutMin: isset($row['heartbeat_timeout_min'])
+                ? (int) $row['heartbeat_timeout_min']
+                : null,
         );
     }
 

@@ -33,7 +33,9 @@ final class ClientRepositoryTest extends TestCase
                 api_token  TEXT    NOT NULL,
                 active     INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+                updated_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at          TEXT    NULL DEFAULT NULL,
+                heartbeat_timeout_min INTEGER NULL DEFAULT NULL
             )
         ");
 
@@ -343,5 +345,107 @@ final class ClientRepositoryTest extends TestCase
         self::assertArrayHasKey('api_token', $array);
         self::assertArrayHasKey('_note',     $array);
         self::assertSame($client->rawToken, $array['api_token']);
+    }
+
+    // ── health: last_seen_at / heartbeat_timeout_min ──────────────────────────
+
+    #[Test]
+    public function new_client_has_never_been_seen_and_no_timeout(): void
+    {
+        $this->repo->create('Billing API', 'billing-api');
+
+        $client = $this->repo->findByKey('billing-api');
+
+        self::assertNull($client->lastSeenAt);
+        self::assertNull($client->heartbeatTimeoutMin);
+        self::assertSame('never_seen', $client->toPublicArray()['status']);
+        self::assertNull($client->toPublicArray()['last_seen_at']);
+    }
+
+    #[Test]
+    public function touch_last_seen_records_utc_time(): void
+    {
+        $this->repo->create('Billing API', 'billing-api');
+
+        $updated = $this->repo->touchLastSeen([
+            'billing-api' => new \DateTimeImmutable('2026-04-17T17:45:00+01:00'),
+        ]);
+
+        self::assertSame(1, $updated);
+        self::assertSame(
+            '2026-04-17T16:45:00+00:00',
+            $this->repo->findByKey('billing-api')->toPublicArray()['last_seen_at'],
+        );
+    }
+
+    #[Test]
+    public function touch_last_seen_never_moves_backwards(): void
+    {
+        $this->repo->create('Billing API', 'billing-api');
+        $this->repo->touchLastSeen(['billing-api' => new \DateTimeImmutable('2026-04-17T16:45:00Z')]);
+
+        $updated = $this->repo->touchLastSeen(['billing-api' => new \DateTimeImmutable('2026-04-17T16:00:00Z')]);
+
+        self::assertSame(0, $updated);
+        self::assertSame('2026-04-17 16:45:00', $this->pdo->query(
+            "SELECT last_seen_at FROM clients WHERE app_key = 'billing-api'"
+        )->fetchColumn());
+    }
+
+    #[Test]
+    public function touch_last_seen_keeps_updated_at(): void
+    {
+        $this->repo->create('Billing API', 'billing-api');
+        $this->pdo->exec("UPDATE clients SET updated_at = '2026-01-01 00:00:00'");
+
+        $this->repo->touchLastSeen(['billing-api' => new \DateTimeImmutable('2026-04-17T16:45:00Z')]);
+
+        self::assertSame('2026-01-01 00:00:00', $this->repo->findByKey('billing-api')->updatedAt);
+    }
+
+    #[Test]
+    public function touch_last_seen_ignores_unknown_keys(): void
+    {
+        self::assertSame(0, $this->repo->touchLastSeen(['ghost' => new \DateTimeImmutable()]));
+        self::assertSame(0, $this->repo->touchLastSeen([]));
+    }
+
+    #[Test]
+    public function set_heartbeat_timeout_sets_and_clears(): void
+    {
+        $this->repo->create('Billing API', 'billing-api');
+
+        self::assertSame(10, $this->repo->setHeartbeatTimeout('billing-api', 10)->heartbeatTimeoutMin);
+        self::assertNull($this->repo->setHeartbeatTimeout('billing-api', null)->heartbeatTimeoutMin);
+    }
+
+    #[Test]
+    public function set_heartbeat_timeout_rejects_out_of_range(): void
+    {
+        $this->repo->create('Billing API', 'billing-api');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->repo->setHeartbeatTimeout('billing-api', 0);
+    }
+
+    #[Test]
+    public function set_heartbeat_timeout_throws_for_unknown_key(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('not found');
+        $this->repo->setHeartbeatTimeout('ghost', 5);
+    }
+
+    #[Test]
+    public function rotate_keeps_health_fields(): void
+    {
+        $this->repo->create('Billing API', 'billing-api');
+        $this->repo->setHeartbeatTimeout('billing-api', 15);
+        $this->repo->touchLastSeen(['billing-api' => new \DateTimeImmutable('2026-04-17T16:45:00Z')]);
+
+        $rotated = $this->repo->rotateToken('billing-api');
+
+        self::assertSame(15, $rotated->heartbeatTimeoutMin);
+        self::assertNotNull($rotated->lastSeenAt);
     }
 }
