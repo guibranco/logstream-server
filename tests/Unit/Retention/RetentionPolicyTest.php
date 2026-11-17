@@ -82,11 +82,32 @@ final class RetentionPolicyTest extends TestCase
     #[Test]
     public function it_has_field_filters_when_any_field_is_set(): void
     {
-        foreach (['app_key', 'app_id', 'level', 'category', 'message_regex', 'message_glob'] as $field) {
-            $policy = RetentionPolicy::fromArray(['name' => $field, $field => 'value']);
+        $values = [
+            'app_key' => 'value', 'app_id' => 'value', 'level' => 'value', 'category' => 'value',
+            'transport' => 'udp', 'message_regex' => 'value', 'message_glob' => 'value',
+        ];
+        foreach ($values as $field => $value) {
+            $policy = RetentionPolicy::fromArray(['name' => $field, $field => $value]);
             self::assertTrue($policy->hasFieldFilters(), "Expected hasFieldFilters() true for {$field}");
             self::assertFalse($policy->isEmpty(), "Expected isEmpty() false for {$field}");
         }
+    }
+
+    #[Test]
+    public function it_normalises_the_transport(): void
+    {
+        self::assertSame('udp', RetentionPolicy::fromArray(['name' => 'x', 'transport' => ' UDP '])->transport);
+        self::assertSame('tcp', RetentionPolicy::fromArray(['name' => 'x', 'transport' => 'tcp'])->transport);
+        self::assertNull(RetentionPolicy::fromArray(['name' => 'x', 'transport' => ''])->transport);
+        self::assertNull(RetentionPolicy::fromArray(['name' => 'x'])->transport);
+    }
+
+    #[Test]
+    public function it_rejects_an_unknown_transport(): void
+    {
+        // Dropping it instead would widen the policy to every transport.
+        $this->expectException(\InvalidArgumentException::class);
+        RetentionPolicy::fromArray(['name' => 'x', 'transport' => 'http']);
     }
 
     // ──────────────────────────────────────────────────────────────────────────

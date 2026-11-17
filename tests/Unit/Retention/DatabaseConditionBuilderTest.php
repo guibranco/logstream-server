@@ -78,6 +78,17 @@ final class DatabaseConditionBuilderTest extends TestCase
     }
 
     #[Test]
+    public function it_builds_a_transport_condition(): void
+    {
+        [$conditions, $params] = DatabaseConditionBuilder::build(
+            RetentionPolicy::fromArray(['name' => 'x', 'transport' => 'udp']),
+        );
+
+        self::assertSame(['transport = :transport'], $conditions);
+        self::assertSame('udp', $params[':transport']);
+    }
+
+    #[Test]
     public function it_builds_a_message_regex_condition(): void
     {
         [$conditions, $params] = DatabaseConditionBuilder::build(
@@ -127,13 +138,14 @@ final class DatabaseConditionBuilderTest extends TestCase
             'app_id'          => 'prod',
             'level'           => 'debug',
             'category'        => 'payments',
+            'transport'       => 'tcp',
             'message_regex'   => 'foo',
             'message_glob'    => 'bar*',
         ]));
 
-        self::assertCount(7, $conditions);
+        self::assertCount(8, $conditions);
         // message_regex and message_glob each bind one parameter per column.
-        self::assertCount(9, $params);
+        self::assertCount(10, $params);
     }
 
     #[Test]

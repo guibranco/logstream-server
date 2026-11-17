@@ -33,6 +33,7 @@ final class DatabasePrunerTest extends TestCase
                 category   TEXT,
                 message    TEXT,
                 message_template TEXT,
+                transport  TEXT,
                 timestamp  TEXT,
                 created_at TEXT
             )',
@@ -102,6 +103,25 @@ final class DatabasePrunerTest extends TestCase
         self::assertSame(2, $this->countRows());
     }
 
+    #[Test]
+    public function it_prunes_by_transport_leaving_other_and_unknown_transports(): void
+    {
+        $this->insert('udp-old', transport: 'udp', timestamp: '2020-01-01 00:00:00');
+        $this->insert('udp-new', transport: 'udp', timestamp: '2099-12-31 00:00:00');
+        $this->insert('tcp-old', transport: 'tcp', timestamp: '2020-01-01 00:00:00');
+        $this->insert('legacy',  transport: null,  timestamp: '2020-01-01 00:00:00');
+
+        $count = $this->pruner->prune(RetentionPolicy::fromArray([
+            'name'            => 'udp-5d',
+            'transport'       => 'udp',
+            'older_than_days' => 5,
+        ]));
+
+        self::assertSame(1, $count);
+        $left = $this->pdo->query('SELECT id FROM log_entries ORDER BY id')->fetchAll(\PDO::FETCH_COLUMN);
+        self::assertSame(['legacy', 'tcp-old', 'udp-new'], $left);
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────
@@ -133,10 +153,11 @@ final class DatabasePrunerTest extends TestCase
         string $message   = 'Test message',
         string $timestamp = '2024-03-01 10:00:00',
         ?string $template = null,
+        ?string $transport = null,
     ): void {
         $stmt = $this->pdo->prepare(
-            'INSERT INTO log_entries (id, app_key, app_id, level, category, message, message_template, timestamp, created_at)
-             VALUES (:id, :app_key, :app_id, :level, :category, :message, :message_template, :timestamp, :created_at)',
+            'INSERT INTO log_entries (id, app_key, app_id, level, category, message, message_template, transport, timestamp, created_at)
+             VALUES (:id, :app_key, :app_id, :level, :category, :message, :message_template, :transport, :timestamp, :created_at)',
         );
         $stmt->execute([
             ':id'         => $id,
@@ -146,6 +167,7 @@ final class DatabasePrunerTest extends TestCase
             ':category'   => $category,
             ':message'    => $message,
             ':message_template' => $template,
+            ':transport'  => $transport,
             ':timestamp'  => $timestamp,
             ':created_at' => $timestamp,
         ]);

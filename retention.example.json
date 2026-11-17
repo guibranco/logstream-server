@@ -28,6 +28,11 @@
       "older_than_days": 1
     },
     {
+      "name": "remove-udp-5d",
+      "transport": "udp",
+      "older_than_days": 5
+    },
+    {
       "name": "remove-hotmail-glob-30d",
       "message_glob": "*@hotmail.com*",
       "older_than_days": 30

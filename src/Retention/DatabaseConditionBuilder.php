@@ -54,6 +54,11 @@ final class DatabaseConditionBuilder
             $params[$p('category')] = $policy->category;
         }
 
+        if ($policy->transport !== null) {
+            $conditions[]            = 'transport = ' . $p('transport');
+            $params[$p('transport')] = $policy->transport;
+        }
+
         if ($policy->messageRegex !== null) {
             $conditions[] = '(message REGEXP ' . $p('message_regex')
                 . ' OR message_template REGEXP ' . $p('message_template_regex') . ')';

@@ -341,6 +341,14 @@ for the UDP listener. Like `sender_ip` it is set by the server and a
 In MariaDB mode, apply `migrations/009_transport.sql` to add the column.
 Entries stored before that keep `transport: null`.
 
+Retention policies can target a transport with `"transport": "tcp"` or
+`"udp"` (for example, drop UDP-shipped access logs sooner than HTTP-ingested
+events). Entries with `transport: null` never match a policy that sets one.
+In MariaDB mode, apply `migrations/010_retention_transport.sql` to add the
+column to `retention_policies`. `GET /api/info` reports
+`features.transport_filters` when both the search filter and the policy
+criterion are available.
+
 ### Ingest modes
 
 `POST /api/logs` can answer before or after the entries are written.

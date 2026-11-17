@@ -127,6 +127,35 @@ final class EntryMatcherTest extends TestCase
     }
 
     #[Test]
+    public function it_matches_by_transport(): void
+    {
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'transport' => 'udp']);
+
+        self::assertTrue(EntryMatcher::matches($policy, ['transport' => 'udp'] + $this->makeEntry()));
+        self::assertFalse(EntryMatcher::matches($policy, ['transport' => 'tcp'] + $this->makeEntry()));
+    }
+
+    #[Test]
+    public function a_transport_criterion_never_matches_entries_without_a_transport(): void
+    {
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'transport' => 'tcp']);
+
+        // Legacy entries and the server's own logs: null or no key at all.
+        self::assertFalse(EntryMatcher::matches($policy, ['transport' => null] + $this->makeEntry()));
+        self::assertFalse(EntryMatcher::matches($policy, $this->makeEntry()));
+    }
+
+    #[Test]
+    public function a_policy_without_transport_matches_every_transport(): void
+    {
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'level' => 'info']);
+
+        self::assertTrue(EntryMatcher::matches($policy, ['transport' => 'udp'] + $this->makeEntry()));
+        self::assertTrue(EntryMatcher::matches($policy, ['transport' => 'tcp'] + $this->makeEntry()));
+        self::assertTrue(EntryMatcher::matches($policy, $this->makeEntry()));
+    }
+
+    #[Test]
     public function it_matches_by_message_regex(): void
     {
         $policy = RetentionPolicy::fromArray(['name' => 'x', 'message_regex' => '.*@hotmail\\.com']);

@@ -118,6 +118,7 @@ if (isset($opts['list'])) {
         if ($policy->appId !== null)          { $parts[] = "app_id={$policy->appId}"; }
         if ($policy->level !== null)          { $parts[] = "level={$policy->level}"; }
         if ($policy->category !== null)       { $parts[] = "category={$policy->category}"; }
+        if ($policy->transport !== null)      { $parts[] = "transport={$policy->transport}"; }
         if ($policy->messageRegex !== null)   { $parts[] = "message_regex={$policy->messageRegex}"; }
         if ($policy->messageGlob !== null)    { $parts[] = "message_glob={$policy->messageGlob}"; }
         echo implode('  ', $parts) . "\n";
