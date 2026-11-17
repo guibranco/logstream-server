@@ -31,9 +31,9 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
     {
         $stmt = $this->db->pdo()->prepare(
             'INSERT INTO retention_policies
-                (name, app_key, app_id, level, category, message_regex, message_glob, older_than_days)
+                (name, app_key, app_id, level, category, transport, message_regex, message_glob, older_than_days)
              VALUES
-                (:name, :app_key, :app_id, :level, :category, :message_regex, :message_glob, :older_than_days)',
+                (:name, :app_key, :app_id, :level, :category, :transport, :message_regex, :message_glob, :older_than_days)',
         );
         $stmt->execute($this->policyToParams($policy));
     }
@@ -46,6 +46,7 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
                  app_id          = :app_id,
                  level           = :level,
                  category        = :category,
+                 transport       = :transport,
                  message_regex   = :message_regex,
                  message_glob    = :message_glob,
                  older_than_days = :older_than_days,
@@ -71,6 +72,7 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
             'app_id'          => $row['app_id'] ?? null,
             'level'           => $row['level'] ?? null,
             'category'        => $row['category'] ?? null,
+            'transport'       => $row['transport'] ?? null,
             'message_regex'   => $row['message_regex'] ?? null,
             'message_glob'    => $row['message_glob'] ?? null,
             'older_than_days' => isset($row['older_than_days']) ? (int) $row['older_than_days'] : null,
@@ -85,6 +87,7 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
             ':app_id'          => $policy->appId,
             ':level'           => $policy->level,
             ':category'        => $policy->category,
+            ':transport'       => $policy->transport,
             ':message_regex'   => $policy->messageRegex,
             ':message_glob'    => $policy->messageGlob,
             ':older_than_days' => $policy->olderThanDays,

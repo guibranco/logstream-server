@@ -120,6 +120,7 @@ final class FileRetentionPolicyRepository implements RetentionPolicyRepositoryIn
             'app_id'          => $policy->appId,
             'level'           => $policy->level,
             'category'        => $policy->category,
+            'transport'       => $policy->transport,
             'message_regex'   => $policy->messageRegex,
             'message_glob'    => $policy->messageGlob,
             'older_than_days' => $policy->olderThanDays,

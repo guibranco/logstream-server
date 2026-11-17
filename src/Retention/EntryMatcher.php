@@ -31,6 +31,12 @@ final class EntryMatcher
             return false;
         }
 
+        // Entries without a recorded transport (legacy rows, the server's own
+        // logs) never match a transport criterion.
+        if ($policy->transport !== null && ($entry['transport'] ?? null) !== $policy->transport) {
+            return false;
+        }
+
         // Message criteria match the rendered message or the template it was
         // rendered from, so a policy can target a template whatever its values.
         if ($policy->messageRegex !== null) {

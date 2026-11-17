@@ -31,6 +31,7 @@ final class DatabaseRetentionPolicyRepositoryTest extends TestCase
                 app_id           VARCHAR(255)  NULL,
                 level            VARCHAR(50)   NULL,
                 category         VARCHAR(255)  NULL,
+                transport        VARCHAR(8)    NULL,
                 message_regex    TEXT          NULL,
                 message_glob     TEXT          NULL,
                 older_than_days  INTEGER       NULL,
@@ -98,6 +99,7 @@ final class DatabaseRetentionPolicyRepositoryTest extends TestCase
         self::assertNull($found->appId);
         self::assertNull($found->level);
         self::assertNull($found->category);
+        self::assertNull($found->transport);
         self::assertNull($found->messageRegex);
         self::assertNull($found->messageGlob);
         self::assertNull($found->olderThanDays);
@@ -117,6 +119,19 @@ final class DatabaseRetentionPolicyRepositoryTest extends TestCase
 
         $found = $this->repo->find('x');
         self::assertSame('error', $found->level);
+    }
+
+    #[Test]
+    public function it_round_trips_the_transport_on_create_and_update(): void
+    {
+        $this->repo->create(RetentionPolicy::fromArray(['name' => 'x', 'transport' => 'udp']));
+        self::assertSame('udp', $this->repo->find('x')->transport);
+
+        $this->repo->update(RetentionPolicy::fromArray(['name' => 'x', 'transport' => 'tcp']));
+        self::assertSame('tcp', $this->repo->find('x')->transport);
+
+        $this->repo->update(RetentionPolicy::fromArray(['name' => 'x', 'level' => 'debug']));
+        self::assertNull($this->repo->find('x')->transport);
     }
 
     // ── delete ────────────────────────────────────────────────────────────────

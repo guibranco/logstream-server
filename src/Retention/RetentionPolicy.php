@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace LogService\Retention;
 
+use LogService\Models\LogEntry;
+
 final class RetentionPolicy
 {
     public function __construct(
@@ -12,6 +14,8 @@ final class RetentionPolicy
         public readonly ?string $appId         = null,
         public readonly ?string $level         = null,
         public readonly ?string $category      = null,
+        /** Network transport the entries arrived over: 'tcp' (HTTP) or 'udp'. */
+        public readonly ?string $transport     = null,
         public readonly ?string $messageRegex  = null,
         public readonly ?string $messageGlob   = null,
         public readonly ?int    $olderThanDays = null,
@@ -38,6 +42,7 @@ final class RetentionPolicy
             || $this->appId !== null
             || $this->level !== null
             || $this->category !== null
+            || $this->transport !== null
             || $this->messageRegex !== null
             || $this->messageGlob !== null;
     }
@@ -72,9 +77,31 @@ final class RetentionPolicy
             appId:         $str('app_id'),
             level:         $str('level'),
             category:      $str('category'),
+            transport:     self::parseTransport($str('transport')),
             messageRegex:  $str('message_regex'),
             messageGlob:   $str('message_glob'),
             olderThanDays: isset($data['older_than_days']) ? (int) $data['older_than_days'] : null,
         );
+    }
+
+    /**
+     * 'tcp' or 'udp' (case-insensitive). Anything else is rejected rather than
+     * dropped: a policy that silently lost its transport would delete entries
+     * of every transport.
+     *
+     * @throws \InvalidArgumentException
+     */
+    private static function parseTransport(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $transport = strtolower(trim($value));
+        if (!in_array($transport, LogEntry::TRANSPORTS, true)) {
+            throw new \InvalidArgumentException(
+                'transport must be one of: ' . implode(', ', LogEntry::TRANSPORTS),
+            );
+        }
+        return $transport;
     }
 }

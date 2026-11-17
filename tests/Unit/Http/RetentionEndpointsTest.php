@@ -438,6 +438,35 @@ final class RetentionEndpointsTest extends TestCase
     }
 
     #[Test]
+    public function create_stores_and_returns_the_transport(): void
+    {
+        $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);
+        $repo->expects(self::once())->method('create')
+            ->with(self::callback(static fn($p) => $p->transport === 'udp'));
+
+        $response = $this->makeRouter(null, $repo)->handle(
+            $this->authed('POST', '/api/retention/policies', json_encode(['name' => 'x', 'transport' => 'UDP'])),
+        );
+        $body = json_decode((string) $response->getBody(), true);
+
+        self::assertSame(201, $response->getStatusCode());
+        self::assertSame('udp', $body['transport']);
+    }
+
+    #[Test]
+    public function create_returns_400_for_an_unknown_transport_without_storing(): void
+    {
+        $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);
+        $repo->expects(self::never())->method('create');
+
+        $response = $this->makeRouter(null, $repo)->handle(
+            $this->authed('POST', '/api/retention/policies', json_encode(['name' => 'x', 'transport' => 'http'])),
+        );
+
+        self::assertSame(400, $response->getStatusCode());
+    }
+
+    #[Test]
     public function create_returns_409_on_duplicate_name(): void
     {
         $repo = $this->createMock(RetentionPolicyRepositoryInterface::class);

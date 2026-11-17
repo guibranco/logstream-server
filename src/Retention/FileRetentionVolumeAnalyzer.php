@@ -55,6 +55,7 @@ final class FileRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerInterf
                 appId:        $policy->appId,
                 level:        $policy->level,
                 category:     $policy->category,
+                transport:    $policy->transport,
                 messageRegex: $policy->messageRegex,
                 messageGlob:  $policy->messageGlob,
             );

@@ -495,6 +495,8 @@ final class Router
                 'demo_mode'         => $this->demoMode,
                 // HMAC-signed log packets over UDP (see the "udp" block).
                 'udp_ingest'        => $this->udpServer !== null,
+                // transport (tcp|udp) is a search filter and a retention policy criterion.
+                'transport_filters' => true,
             ],
             'self_logging' => [
                 'enabled' => $this->selfLogging,
@@ -1155,6 +1157,7 @@ final class Router
             'app_id'          => $policy->appId,
             'level'           => $policy->level,
             'category'        => $policy->category,
+            'transport'       => $policy->transport,
             'message_regex'   => $policy->messageRegex,
             'message_glob'    => $policy->messageGlob,
             'older_than_days' => $policy->olderThanDays,

@@ -56,7 +56,7 @@ final class CachedRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerInte
     private static function keyFor(array $policies, int $days): string
     {
         $parts = array_map(static fn(RetentionPolicy $p): array => [
-            $p->name, $p->appKey, $p->appId, $p->level, $p->category,
+            $p->name, $p->appKey, $p->appId, $p->level, $p->category, $p->transport,
             $p->messageRegex, $p->messageGlob, $p->olderThanDays,
         ], $policies);
 
