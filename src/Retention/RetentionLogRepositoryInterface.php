@@ -11,4 +11,12 @@ namespace LogService\Retention;
 interface RetentionLogRepositoryInterface
 {
     public function record(RetentionResult $result): void;
+
+    /**
+     * Runs recorded at or after $since (UTC), newest first.
+     *
+     * @param string|null $policy Only runs of this policy, when given.
+     * @return RetentionLogEntry[]
+     */
+    public function recent(\DateTimeImmutable $since, ?string $policy = null, int $limit = 500): array;
 }

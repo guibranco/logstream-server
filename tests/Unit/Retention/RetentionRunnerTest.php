@@ -377,4 +377,9 @@ final class InMemoryRetentionLog implements RetentionLogRepositoryInterface
     {
         $this->results[] = $result;
     }
+
+    public function recent(\DateTimeImmutable $since, ?string $policy = null, int $limit = 500): array
+    {
+        return [];
+    }
 }

@@ -33,6 +33,7 @@ use LogService\Repository\ClientRepository;
 use LogService\Retention\CachedRetentionVolumeAnalyzer;
 use LogService\Retention\DatabaseRetentionEngine;
 use LogService\Retention\DatabaseRetentionLogRepository;
+use LogService\Retention\FileRetentionLogRepository;
 use LogService\Retention\DatabaseRetentionPolicyRepository;
 use LogService\Retention\DatabaseRetentionVolumeAnalyzer;
 use LogService\Retention\FileRetentionEngine;
@@ -169,6 +170,9 @@ if ($retentionConfig->isEnabled()) {
         );
         $volumeAnalyzer   = new CachedRetentionVolumeAnalyzer(
             new FileRetentionVolumeAnalyzer($logPath ?? (__DIR__ . '/../storage/logs')),
+        );
+        $retentionLog     = new FileRetentionLogRepository(
+            $_ENV['RETENTION_LOG_PATH'] ?? dirname($logPath ?? (__DIR__ . '/../storage/logs')) . '/retention_log.jsonl',
         );
     }
 
@@ -321,6 +325,7 @@ $router = new Router(
     clientActivity:   $clientActivity,
     udpServer:        $udpServer,
     udpConfig:        $udpConfig,
+    retentionLog:     $retentionLog,
 );
 
 // StreamingRequestMiddleware must come first: without it HttpServer prepends its

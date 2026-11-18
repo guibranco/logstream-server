@@ -9,6 +9,7 @@ use LogService\Database\Connection;
 use Dotenv\Dotenv;
 use LogService\Retention\DatabasePruner;
 use LogService\Retention\DatabaseRetentionLogRepository;
+use LogService\Retention\FileRetentionLogRepository;
 use LogService\Retention\DatabaseRetentionPolicyRepository;
 use LogService\Retention\FileStoragePruner;
 use LogService\Retention\RetentionConfig;
@@ -92,6 +93,9 @@ if ($storageType === 'mariadb') {
     }
 } else {
     $logPath = $_ENV['LOG_PATH'] ?? dirname(__DIR__) . '/storage/logs';
+    $log     = new FileRetentionLogRepository(
+        $_ENV['RETENTION_LOG_PATH'] ?? dirname($logPath) . '/retention_log.jsonl',
+    );
     $pruner  = new FileStoragePruner($logPath);
 }
 

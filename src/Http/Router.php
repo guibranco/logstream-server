@@ -17,6 +17,8 @@ use LogService\Logging\SelfLogConfig;
 use LogService\Models\LogEntry;
 use LogService\Repository\Client;
 use LogService\Repository\ClientRepository;
+use LogService\Retention\RetentionLogEntry;
+use LogService\Retention\RetentionLogRepositoryInterface;
 use LogService\Retention\RetentionPolicy;
 use LogService\Retention\RetentionPolicyRepositoryInterface;
 use LogService\Retention\CachedRetentionVolumeAnalyzer;
@@ -62,6 +64,11 @@ final class Router
     private const VOLUME_DEFAULT_DAYS = 90;
     private const VOLUME_MAX_DAYS     = 3650;
 
+    private const RUN_LOG_DEFAULT_DAYS  = 90;
+    private const RUN_LOG_MAX_DAYS      = 365;
+    private const RUN_LOG_DEFAULT_LIMIT = 500;
+    private const RUN_LOG_MAX_LIMIT     = 5000;
+
     public function __construct(
         private readonly StorageInterface                     $storage,
         private readonly LogHub                              $hub,
@@ -87,6 +94,8 @@ final class Router
         /** UDP ingest (null when UDP_ENABLED=false); only read for /api/health and /api/info. */
         private readonly ?UdpLogServer                       $udpServer         = null,
         private readonly ?UdpConfig                          $udpConfig         = null,
+        /** History of retention runs (retention_log table, or a JSONL file in file mode). */
+        private readonly ?RetentionLogRepositoryInterface    $retentionLog      = null,
     ) {
         $this->sink = new EntrySink($storage, $hub, $ingestBuffer, $clientActivity);
     }
@@ -250,6 +259,8 @@ final class Router
         $exact = match ("{$method} {$path}") {
             // Stored volume by age, for the retention chart
             'GET /api/retention/volume'    => $this->handleRetentionVolume($request, $cors),
+            // History of retention runs (one row per policy per run)
+            'GET /api/retention/log'       => $this->handleRetentionLog($request, $cors),
             // Run all policies
             'POST /api/retention/run'      => $this->handleRetentionRun(null, $request, $cors),
             // List policies
@@ -370,6 +381,64 @@ final class Router
         return $valid ? (int) $raw : null;
     }
 
+    private function handleRetentionLog(ServerRequestInterface $request, array $cors): Response
+    {
+        if ($this->retentionLog === null) {
+            return $this->json(['error' => 'Retention log is not configured'], 503, $cors);
+        }
+
+        $query = $request->getQueryParams();
+        $days  = $this->parseBoundedInt($query['days'] ?? null, self::RUN_LOG_DEFAULT_DAYS, self::RUN_LOG_MAX_DAYS);
+        if ($days === null) {
+            return $this->json(['error' => 'days must be an integer between 1 and ' . self::RUN_LOG_MAX_DAYS], 400, $cors);
+        }
+        $limit = $this->parseBoundedInt($query['limit'] ?? null, self::RUN_LOG_DEFAULT_LIMIT, self::RUN_LOG_MAX_LIMIT);
+        if ($limit === null) {
+            return $this->json(['error' => 'limit must be an integer between 1 and ' . self::RUN_LOG_MAX_LIMIT], 400, $cors);
+        }
+        $policy = $query['policy'] ?? null;
+        if ($policy !== null && (!is_string($policy) || trim($policy) === '')) {
+            return $this->json(['error' => 'policy must be a non-empty string'], 400, $cors);
+        }
+
+        $since = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->modify("-{$days} days");
+
+        try {
+            // One extra row tells whether the list was cut at $limit.
+            $entries = $this->retentionLog->recent($since, $policy, $limit + 1);
+        } catch (\Throwable $e) {
+            return $this->json(['error' => $e->getMessage()], 500, $cors);
+        }
+
+        $truncated = count($entries) > $limit;
+        $entries   = array_slice($entries, 0, $limit);
+
+        return $this->json([
+            'days'      => $days,
+            'since'     => $since->format(\DateTimeInterface::RFC3339),
+            'policy'    => $policy,
+            'runs'      => array_map(static fn(RetentionLogEntry $e) => $e->toArray(), $entries),
+            'truncated' => $truncated,
+            'totals'    => [
+                'runs'     => count($entries),
+                'deleted'  => array_sum(array_map(static fn(RetentionLogEntry $e) => $e->dryRun ? 0 : $e->deleted, $entries)),
+                'failed'   => count(array_filter($entries, static fn(RetentionLogEntry $e) => $e->error !== null)),
+                'dry_runs' => count(array_filter($entries, static fn(RetentionLogEntry $e) => $e->dryRun)),
+            ],
+        ], 200, $cors);
+    }
+
+    /** A positive integer query value up to $max, $default when absent, or null when invalid. */
+    private function parseBoundedInt(mixed $raw, int $default, int $max): ?int
+    {
+        if ($raw === null || $raw === '') {
+            return $default;
+        }
+
+        $valid = is_string($raw) && ctype_digit($raw) && (int) $raw >= 1 && (int) $raw <= $max;
+        return $valid ? (int) $raw : null;
+    }
+
     private function handleRetentionList(array $cors): Response
     {
         if ($this->policyRepository === null) {
@@ -484,6 +553,8 @@ final class Router
             'features'     => [
                 'client_management' => $this->storageType === 'mariadb',
                 'retention'         => $this->retentionRunner !== null,
+                // GET /api/retention/log lists past retention runs.
+                'retention_log'     => $this->retentionLog !== null,
                 'websocket'         => true,
                 // app_key[], app_id[] and level[] on GET /api/logs match any of the values.
                 'multi_value_filters' => true,
