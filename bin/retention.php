@@ -9,6 +9,7 @@ use LogService\Database\Connection;
 use Dotenv\Dotenv;
 use LogService\Retention\DatabaseRetentionEngine;
 use LogService\Retention\DatabaseRetentionLogRepository;
+use LogService\Retention\FileRetentionLogRepository;
 use LogService\Retention\DatabaseRetentionPolicyRepository;
 use LogService\Retention\FileRetentionEngine;
 use LogService\Retention\RetentionConfig;
@@ -65,7 +66,8 @@ try {
 //
 // In MariaDB mode the policies live in the retention_policies table (the same
 // source the server and the UI use) and every run is recorded in retention_log.
-// In file mode the policies come from the JSON config file.
+// In file mode the policies come from the JSON config file and runs are
+// recorded in retention_log.jsonl (RETENTION_LOG_PATH), next to the log directory.
 
 $repository = null;
 $log        = null;
@@ -89,6 +91,9 @@ if ($storageType === 'mariadb') {
     $log        = new DatabaseRetentionLogRepository($db);
 } else {
     $logPath = $_ENV['LOG_PATH'] ?? __DIR__ . '/../storage/logs';
+    $log     = new FileRetentionLogRepository(
+        $_ENV['RETENTION_LOG_PATH'] ?? dirname($logPath) . '/retention_log.jsonl',
+    );
     $engine  = new FileRetentionEngine($logPath);
 }
 

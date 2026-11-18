@@ -9,6 +9,8 @@ use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Http\Router;
 use LogService\Retention\RetentionConfig;
 use LogService\Retention\RetentionEngineInterface;
+use LogService\Retention\RetentionLogEntry;
+use LogService\Retention\RetentionLogRepositoryInterface;
 use LogService\Retention\RetentionPolicy;
 use LogService\Retention\RetentionPolicyRepositoryInterface;
 use LogService\Retention\RetentionResult;
@@ -28,6 +30,7 @@ final class RetentionEndpointsTest extends TestCase
         ?RetentionRunner                      $retentionRunner  = null,
         ?RetentionPolicyRepositoryInterface   $policyRepository = null,
         ?RetentionVolumeAnalyzerInterface     $volumeAnalyzer   = null,
+        ?RetentionLogRepositoryInterface      $retentionLog     = null,
     ): Router {
         return new Router(
             storage:          $this->createStub(StorageInterface::class),
@@ -38,6 +41,7 @@ final class RetentionEndpointsTest extends TestCase
             retentionRunner:  $retentionRunner,
             policyRepository: $policyRepository,
             volumeAnalyzer:   $volumeAnalyzer,
+            retentionLog:     $retentionLog,
         );
     }
 
@@ -650,5 +654,109 @@ final class RetentionEndpointsTest extends TestCase
         $response = $this->makeRouter(null, $repo, $analyzer)->handle($this->authed('GET', '/api/retention/volume'));
 
         self::assertSame(500, $response->getStatusCode());
+    }
+
+    // ── GET /api/retention/log ────────────────────────────────────────────────
+
+    #[Test]
+    public function run_log_returns_503_when_not_configured(): void
+    {
+        $response = $this->makeRouter()->handle($this->authed('GET', '/api/retention/log'));
+
+        self::assertSame(503, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function run_log_requires_auth(): void
+    {
+        $log = $this->createMock(RetentionLogRepositoryInterface::class);
+        $log->expects(self::never())->method('recent');
+
+        $response = $this->makeRouter(retentionLog: $log)
+            ->handle(new ServerRequest('GET', 'http://localhost/api/retention/log'));
+
+        self::assertSame(401, $response->getStatusCode());
+    }
+
+    #[Test]
+    public function run_log_defaults_to_the_last_90_days(): void
+    {
+        $log = $this->createMock(RetentionLogRepositoryInterface::class);
+        $log->expects(self::once())
+            ->method('recent')
+            ->with(
+                self::callback(function (\DateTimeImmutable $since): bool {
+                    $expected = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->modify('-90 days');
+                    return abs($since->getTimestamp() - $expected->getTimestamp()) < 5;
+                }),
+                null,
+                501,
+            )
+            ->willReturn([
+                new RetentionLogEntry(2, 'debug-7d', 10, false, 12, '10 entries pruned', [], null, '2026-11-17 03:00:00'),
+                new RetentionLogEntry(1, 'all-90d', 4, true, 5, '4 entries pruned', ['w'], null, '2026-11-16 03:00:00'),
+                new RetentionLogEntry(0, 'broken', 0, false, 0, 'Error: boom', [], 'boom', '2026-11-15 03:00:00'),
+            ]);
+
+        $response = $this->makeRouter(retentionLog: $log)->handle($this->authed('GET', '/api/retention/log'));
+        $body     = json_decode((string) $response->getBody(), true);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(90, $body['days']);
+        self::assertNull($body['policy']);
+        self::assertFalse($body['truncated']);
+        self::assertCount(3, $body['runs']);
+        self::assertSame('debug-7d', $body['runs'][0]['policy']);
+        self::assertSame('2026-11-17T03:00:00+00:00', $body['runs'][0]['ran_at']);
+        self::assertSame(['w'], $body['runs'][1]['warnings']);
+        // Dry runs deleted nothing, so they are left out of the deleted total.
+        self::assertSame(['runs' => 3, 'deleted' => 10, 'failed' => 1, 'dry_runs' => 1], $body['totals']);
+    }
+
+    #[Test]
+    public function run_log_passes_policy_days_and_limit_and_reports_truncation(): void
+    {
+        $entry = new RetentionLogEntry(1, 'a', 1, false, 1, null, [], null, '2026-11-17 03:00:00');
+
+        $log = $this->createMock(RetentionLogRepositoryInterface::class);
+        $log->expects(self::once())
+            ->method('recent')
+            ->with(self::isInstanceOf(\DateTimeImmutable::class), 'a', 3)
+            ->willReturn([$entry, $entry, $entry]);
+
+        $response = $this->makeRouter(retentionLog: $log)
+            ->handle($this->authed('GET', '/api/retention/log?days=7&policy=a&limit=2'));
+        $body     = json_decode((string) $response->getBody(), true);
+
+        self::assertSame(200, $response->getStatusCode());
+        self::assertSame(7, $body['days']);
+        self::assertSame('a', $body['policy']);
+        self::assertCount(2, $body['runs']);
+        self::assertTrue($body['truncated']);
+    }
+
+    /** @return array<string, array{string}> */
+    public static function invalidRunLogQueries(): array
+    {
+        return [
+            'days zero'      => ['days=0'],
+            'days too large' => ['days=366'],
+            'days not int'   => ['days=abc'],
+            'limit zero'     => ['limit=0'],
+            'limit too big'  => ['limit=5001'],
+            'blank policy'   => ['policy=%20'],
+        ];
+    }
+
+    #[Test]
+    #[DataProvider('invalidRunLogQueries')]
+    public function run_log_rejects_invalid_parameters(string $query): void
+    {
+        $log = $this->createMock(RetentionLogRepositoryInterface::class);
+        $log->expects(self::never())->method('recent');
+
+        $response = $this->makeRouter(retentionLog: $log)->handle($this->authed('GET', "/api/retention/log?{$query}"));
+
+        self::assertSame(400, $response->getStatusCode());
     }
 }

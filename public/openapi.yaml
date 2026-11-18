@@ -633,6 +633,61 @@ components:
           type: number
           description: matched_count ÷ all stored entries (0–1).
 
+    RetentionLogEntry:
+      type: object
+      description: One recorded run of one retention policy.
+      required: [id, policy, deleted, dry_run, duration_ms, summary, warnings, error, ran_at]
+      properties:
+        id: { type: integer, example: 128 }
+        policy: { type: string, example: debug-7d }
+        deleted:
+          type: integer
+          description: Entries deleted (or, for a dry run, that would have been deleted).
+          example: 42
+        dry_run: { type: boolean, example: false }
+        duration_ms: { type: integer, example: 15 }
+        summary: { type: string, nullable: true, example: "42 entries pruned" }
+        warnings:
+          type: array
+          items: { type: string }
+        error:
+          type: string
+          nullable: true
+          description: Why the policy failed; `null` when it succeeded.
+        ran_at: { type: string, format: date-time, example: "2026-11-17T03:00:00+00:00" }
+
+    RetentionLogResponse:
+      type: object
+      required: [days, since, policy, runs, truncated, totals]
+      properties:
+        days: { type: integer, example: 90 }
+        since:
+          type: string
+          format: date-time
+          description: Oldest run time included (now minus `days`).
+        policy:
+          type: string
+          nullable: true
+          description: The policy filter, or `null` for all policies.
+        runs:
+          type: array
+          description: Newest first.
+          items:
+            $ref: '#/components/schemas/RetentionLogEntry'
+        truncated:
+          type: boolean
+          description: True when more runs matched than `limit`.
+        totals:
+          type: object
+          required: [runs, deleted, failed, dry_runs]
+          properties:
+            runs: { type: integer }
+            deleted:
+              type: integer
+              description: Entries deleted by real (non-dry) runs in `runs`.
+            failed: { type: integer }
+            dry_runs: { type: integer }
+
     RetentionVolumeResponse:
       type: object
       required: [generated_at, days, size_basis, buckets, older, future, policies, totals, storage]
@@ -734,6 +789,13 @@ components:
               type: boolean
               description: True when a retention config is loaded and enabled.
               example: false
+            retention_log:
+              type: boolean
+              description: |
+                True when `GET /api/retention/log` is available (retention is
+                enabled; runs are kept in `retention_log`, or in
+                `retention_log.jsonl` in file mode). Older servers omit it.
+              example: true
             websocket:
               type: boolean
               description: Always true — WebSocket is always available.
@@ -1876,6 +1938,62 @@ paths:
                 $ref: '#/components/schemas/RetentionVolumeResponse'
         "400":
           description: Invalid `days`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Missing or invalid UI_SECRET.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Retention is not configured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/retention/log:
+    get:
+      operationId: getRetentionLog
+      summary: History of retention runs
+      description: |
+        Past retention runs, one row per policy per run (scheduled, API, CLI,
+        real or dry run), newest first. Defaults to the last 90 days.
+
+        MariaDB mode reads the `retention_log` table; file mode reads
+        `retention_log.jsonl` (`RETENTION_LOG_PATH`), which keeps 365 days.
+
+        Returns `503` when retention is not configured.
+
+        Requires `Authorization: Bearer <UI_SECRET>`.
+      tags: [Retention]
+      security:
+        - ReadKey: []
+      parameters:
+        - name: days
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 365, default: 90 }
+          description: How far back to look, in days.
+        - name: policy
+          in: query
+          schema: { type: string }
+          description: Only runs of this policy.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 5000, default: 500 }
+          description: Maximum number of runs returned.
+      responses:
+        "200":
+          description: Recorded runs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionLogResponse'
+        "400":
+          description: Invalid `days`, `limit` or `policy`.
           content:
             application/json:
               schema:

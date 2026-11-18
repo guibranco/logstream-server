@@ -531,6 +531,7 @@ Add these to your `.env` file (or pass them directly to `docker compose`):
 | `UDP_PORT` | ❌ | UDP ingest port (default: `8082`) |
 | `UDP_ALLOWED_SOURCES` | ❌ | Comma-separated IPs/CIDRs allowed to send UDP packets (default: any). With Docker's userland proxy the source may appear as the bridge gateway — restrict at the host firewall instead |
 | `LOG_PATH` | ❌ | Log path when using file storage (default: `./storage/logs`) |
+| `RETENTION_LOG_PATH` | ❌ | File-mode history of retention runs, shown by `GET /api/retention/log` (default: `retention_log.jsonl` next to `LOG_PATH`) |
 | `TRUSTED_PROXIES` | ❌ | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` is trusted for `sender_ip` (e.g. `172.16.0.0/12` for the Nginx container) |
 | `SELF_LOG_ENABLED` | ❌ | Store the server's own messages (startup, PHP deprecations/warnings/errors, ingest problems) as the app `logstream-server` (default: `true`) |
 | `SELF_LOG_LEVEL` | ❌ | Lowest level of those stored (default: `info`) |

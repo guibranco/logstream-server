@@ -461,7 +461,7 @@ JSON file named by `RETENTION_CONFIG` only supplies `enabled` and
 `interval_hours`. In file mode the policies come from that JSON file.
 
 Every run (real or `--dry-run` / `?dry_run=1`) is written to `retention_log`
-in MariaDB mode, one row per policy, including the error when a policy fails.
+(in MariaDB mode; see below for file mode), one row per policy, including the error when a policy fails.
 A failed policy reports `pruned: 0`, so check `error` in the result (the API
 response also returns a `failed` count, and the CLI scripts exit with code 1).
 
@@ -469,6 +469,11 @@ response also returns a `failed` count, and the CLI scripts exit with code 1).
 SELECT ran_at, policy_name, dry_run, deleted, error
 FROM retention_log ORDER BY id DESC LIMIT 20;
 ```
+
+`GET /api/retention/log?days=90` returns the same history over the API (newest
+first, optional `policy` and `limit`), and the UI shows it on the Retention
+screen. In file mode runs go to `retention_log.jsonl` next to the log directory
+(override with `RETENTION_LOG_PATH`); lines older than 365 days are dropped.
 
 ### Retention volume chart
 
