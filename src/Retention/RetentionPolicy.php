@@ -8,6 +8,9 @@ use LogService\Models\LogEntry;
 
 final class RetentionPolicy
 {
+    /** Cutoff pinned by frozen(), so one run uses a single instant; null = computed per call. */
+    private ?\DateTimeImmutable $fixedCutoff = null;
+
     public function __construct(
         public readonly string  $name,
         public readonly ?string $appKey        = null,
@@ -35,12 +38,19 @@ final class RetentionPolicy
 
     // ──────────────────────────────────────────────────────────────────────────
 
-    public function getCutoffDate(): ?\DateTimeImmutable
+    /** @param \DateTimeImmutable|null $now The current time; defaults to the real clock (tests pass one). */
+    public function getCutoffDate(?\DateTimeImmutable $now = null): ?\DateTimeImmutable
     {
         // "older_than_hours: N" is a rolling window: entries timestamped before
         // now − N hours are removed, so the cutoff moves with every run.
+        if ($this->fixedCutoff !== null) {
+            return $this->fixedCutoff;
+        }
+
         if ($this->olderThanHours !== null) {
-            return (new \DateTimeImmutable('now'))->modify("-{$this->olderThanHours} hours");
+            // Elapsed time, not wall-clock fields: modify("-N hours") gains or
+            // loses an hour across a DST change in the default timezone.
+            return ($now ?? new \DateTimeImmutable('now'))->sub(new \DateInterval("PT{$this->olderThanHours}H"));
         }
 
         if ($this->olderThanDays === null) {
@@ -50,7 +60,19 @@ final class RetentionPolicy
         // Anchor to today's midnight. "older_than_days: N" means "delete entries
         // strictly older than N days": entries timestamped before today-N 00:00:00
         // are removed; entries from today-N 00:00:00 onwards are kept.
-        return (new \DateTimeImmutable('today'))->modify("-{$this->olderThanDays} days");
+        $today = $now !== null ? $now->setTime(0, 0) : new \DateTimeImmutable('today');
+        return $today->modify("-{$this->olderThanDays} days");
+    }
+
+    /**
+     * A copy whose cutoff is computed once, now, and kept. A run (or a report)
+     * uses it so a rolling hour cutoff does not move forward while it scans.
+     */
+    public function frozen(): self
+    {
+        $copy              = clone $this;
+        $copy->fixedCutoff = $this->getCutoffDate();
+        return $copy;
     }
 
     /** True when the policy has an age criterion (in days or in hours). */

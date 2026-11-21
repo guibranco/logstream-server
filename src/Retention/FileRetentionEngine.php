@@ -39,6 +39,8 @@ final class FileRetentionEngine implements RetentionEngineInterface
         $filesSkipped   = 0;
         $warnings       = [];
 
+        // One cutoff for the whole scan, the same one reported below.
+        $policy     = $policy->frozen();
         $cutoff     = $policy->getCutoffDate();
         $cutoffDate = $cutoff?->format(\DateTimeInterface::RFC3339);
 

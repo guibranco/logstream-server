@@ -148,6 +148,40 @@ final class RetentionPolicyTest extends TestCase
     }
 
     #[Test]
+    public function it_counts_hours_in_elapsed_time_across_a_dst_change(): void
+    {
+        $tz = date_default_timezone_get();
+        date_default_timezone_set('Europe/Dublin');
+        try {
+            // Clocks go forward at 01:00 on 2026-03-29 and back at 02:00 on 2026-10-25;
+            // modify('-4 hours') would give 3 and 5 elapsed hours here.
+            $policy = RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => 4]);
+            foreach (['2026-03-29 03:30:00', '2026-10-25 03:30:00'] as $at) {
+                $now = new \DateTimeImmutable($at);
+                self::assertSame($now->getTimestamp() - 4 * 3600, $policy->getCutoffDate($now)->getTimestamp(), $at);
+            }
+
+            // Day cutoffs stay on local midnight.
+            $days = RetentionPolicy::fromArray(['name' => 'y', 'older_than_days' => 1])
+                ->getCutoffDate(new \DateTimeImmutable('2026-03-29 03:30:00'));
+            self::assertSame('2026-03-28 00:00:00', $days->format('Y-m-d H:i:s'));
+        } finally {
+            date_default_timezone_set($tz);
+        }
+    }
+
+    #[Test]
+    public function it_keeps_one_cutoff_once_frozen(): void
+    {
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => 1])->frozen();
+        $first  = $policy->getCutoffDate();
+        usleep(1100);
+
+        self::assertSame($first, $policy->getCutoffDate());
+        self::assertSame(1, $policy->olderThanHours);
+    }
+
+    #[Test]
     public function it_accepts_hours_as_a_numeric_string(): void
     {
         self::assertSame(4, RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => '4'])->olderThanHours);
