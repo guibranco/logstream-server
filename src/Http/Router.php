@@ -568,6 +568,8 @@ final class Router
                 'udp_ingest'        => $this->udpServer !== null,
                 // transport (tcp|udp) is a search filter and a retention policy criterion.
                 'transport_filters' => true,
+                // Retention policies accept older_than_hours (rolling) besides older_than_days.
+                'retention_hours'   => true,
             ],
             'self_logging' => [
                 'enabled' => $this->selfLogging,
@@ -1232,6 +1234,7 @@ final class Router
             'message_regex'   => $policy->messageRegex,
             'message_glob'    => $policy->messageGlob,
             'older_than_days' => $policy->olderThanDays,
+            'older_than_hours' => $policy->olderThanHours,
         ], fn($v) => $v !== null);
     }
 

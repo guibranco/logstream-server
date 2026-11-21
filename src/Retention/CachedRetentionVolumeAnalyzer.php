@@ -57,10 +57,11 @@ final class CachedRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerInte
     {
         $parts = array_map(static fn(RetentionPolicy $p): array => [
             $p->name, $p->appKey, $p->appId, $p->level, $p->category, $p->transport,
-            $p->messageRegex, $p->messageGlob, $p->olderThanDays,
+            $p->messageRegex, $p->messageGlob, $p->olderThanDays, $p->olderThanHours,
         ], $policies);
 
-        // The day matters too: cutoffs move at midnight.
+        // The day matters too: day cutoffs move at midnight (hour cutoffs drift
+        // within the TTL, which bounds how stale their due_* numbers get).
         return hash('sha256', serialize([$days, date('Y-m-d'), $parts]));
     }
 }

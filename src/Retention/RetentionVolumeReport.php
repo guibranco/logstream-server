@@ -17,7 +17,8 @@ namespace LogService\Retention;
  *
  * Because "older_than_days: N" cuts at today−N 00:00, a whole day is either
  * past a policy's cutoff or not, so markers sit exactly on day boundaries:
- * the marker for N lies between age N and age N+1.
+ * the marker for N lies between age N and age N+1. "older_than_hours: N"
+ * cuts at now − N hours instead, which can fall inside a day.
  */
 final class RetentionVolumeReport
 {
@@ -151,6 +152,7 @@ final class RetentionVolumeReport
             $stats[$policy->name] = [
                 'name'            => $policy->name,
                 'older_than_days' => $policy->olderThanDays,
+                'older_than_hours' => $policy->olderThanHours,
                 'active'          => !$policy->isEmpty(),
                 'matched_count'   => 0,
                 'matched_bytes'   => 0,

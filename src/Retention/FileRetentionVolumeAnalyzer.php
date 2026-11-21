@@ -21,7 +21,10 @@ final class FileRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerInterf
 
     public function analyze(array $policies, int $days): RetentionVolumeReport
     {
-        $active = array_values(array_filter($policies, fn(RetentionPolicy $p) => !$p->isEmpty()));
+        $active = array_values(array_map(
+            static fn(RetentionPolicy $p): RetentionPolicy => $p->frozen(),
+            array_filter($policies, fn(RetentionPolicy $p) => !$p->isEmpty()),
+        ));
         $anyAge = self::withoutCutoffs($active);
         $daily  = [];
 

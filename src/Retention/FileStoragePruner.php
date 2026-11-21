@@ -33,6 +33,8 @@ final class FileStoragePruner implements PrunerInterface
         }
 
         $pruned = 0;
+        // One cutoff for the whole scan: a rolling hour cutoff must not move while it runs.
+        $policy = $policy->frozen();
 
         foreach (JsonlDayFileScanner::listDayFiles($this->basePath) as [$fileDate, $filePath]) {
             $pruned += $this->pruneFile($fileDate, $filePath, $policy);

@@ -8,11 +8,9 @@ final class EntryMatcher
 {
     public static function matches(RetentionPolicy $policy, array $entry): bool
     {
-        if ($policy->olderThanDays !== null) {
-            $cutoff = $policy->getCutoffDate();
-            if (!self::isExpired($entry, $cutoff)) {
-                return false;
-            }
+        $cutoff = $policy->getCutoffDate();
+        if ($cutoff !== null && !self::isExpired($entry, $cutoff)) {
+            return false;
         }
 
         if ($policy->appKey !== null && ($entry['app_key'] ?? '') !== $policy->appKey) {

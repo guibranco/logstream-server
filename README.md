@@ -349,6 +349,17 @@ column to `retention_policies`. `GET /api/info` reports
 `features.transport_filters` when both the search filter and the policy
 criterion are available.
 
+### Retention ages in hours
+
+A policy's age is either `older_than_days` (entries dated before today − N,
+cut at midnight) or `older_than_hours` (a rolling window: entries timestamped
+before now − N hours). Setting both is rejected with 400. Hour ages suit short
+windows such as `"older_than_hours": 12` for noisy debug entries, and they are
+applied on each scheduled run (`interval_hours`), so set the interval at or
+below the shortest hour age you use. In MariaDB mode, apply
+`migrations/011_retention_hours.sql` to add the column. `GET /api/info`
+reports `features.retention_hours`.
+
 ### Ingest modes
 
 `POST /api/logs` can answer before or after the entries are written.
@@ -481,7 +492,7 @@ screen. In file mode runs go to `retention_log.jsonl` next to the log directory
 size), how many each policy matches at any age, and how many are already past
 a policy's cutoff (`due_*`, counted once when policies overlap). The UI draws
 it like Seq's storage view: volume by age with a numbered marker at each
-policy's `older_than_days`.
+policy's `older_than_days` or `older_than_hours`.
 
 Sizes are exact JSONL line sizes in file mode and the length of message,
 template and context in MariaDB mode. In MariaDB mode the report also has a

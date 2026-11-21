@@ -135,6 +135,109 @@ final class RetentionPolicyTest extends TestCase
         self::assertSame('00:00:00', $cutoff->format('H:i:s'));
     }
 
+    #[Test]
+    public function it_returns_a_rolling_cutoff_n_hours_ago(): void
+    {
+        $before = (new \DateTimeImmutable('now'))->modify('-12 hours')->getTimestamp();
+        $cutoff = RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => 12])->getCutoffDate();
+        $after  = (new \DateTimeImmutable('now'))->modify('-12 hours')->getTimestamp();
+
+        self::assertNotNull($cutoff);
+        self::assertGreaterThanOrEqual($before, $cutoff->getTimestamp());
+        self::assertLessThanOrEqual($after, $cutoff->getTimestamp());
+    }
+
+    #[Test]
+    public function it_counts_hours_in_elapsed_time_across_a_dst_change(): void
+    {
+        $tz = date_default_timezone_get();
+        date_default_timezone_set('Europe/Dublin');
+        try {
+            // Clocks go forward at 01:00 on 2026-03-29 and back at 02:00 on 2026-10-25;
+            // modify('-4 hours') would give 3 and 5 elapsed hours here.
+            $policy = RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => 4]);
+            foreach (['2026-03-29 03:30:00', '2026-10-25 03:30:00'] as $at) {
+                $now = new \DateTimeImmutable($at);
+                self::assertSame($now->getTimestamp() - 4 * 3600, $policy->getCutoffDate($now)->getTimestamp(), $at);
+            }
+
+            // Day cutoffs stay on local midnight.
+            $days = RetentionPolicy::fromArray(['name' => 'y', 'older_than_days' => 1])
+                ->getCutoffDate(new \DateTimeImmutable('2026-03-29 03:30:00'));
+            self::assertSame('2026-03-28 00:00:00', $days->format('Y-m-d H:i:s'));
+        } finally {
+            date_default_timezone_set($tz);
+        }
+    }
+
+    #[Test]
+    public function it_keeps_one_cutoff_once_frozen(): void
+    {
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => 1])->frozen();
+        $first  = $policy->getCutoffDate();
+        usleep(1100);
+
+        self::assertSame($first, $policy->getCutoffDate());
+        self::assertSame(1, $policy->olderThanHours);
+    }
+
+    #[Test]
+    public function it_accepts_hours_as_a_numeric_string(): void
+    {
+        self::assertSame(4, RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => '4'])->olderThanHours);
+        self::assertNull(RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => ''])->olderThanHours);
+    }
+
+    #[Test]
+    public function it_rejects_both_days_and_hours(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RetentionPolicy::fromArray(['name' => 'x', 'older_than_days' => 1, 'older_than_hours' => 12]);
+    }
+
+    #[Test]
+    public function it_rejects_hours_below_one(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => 0]);
+    }
+
+    #[Test]
+    public function it_rejects_hours_that_are_not_whole_numbers(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => '12h']);
+    }
+
+    #[Test]
+    public function it_is_not_empty_when_only_hours_are_set(): void
+    {
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => 1]);
+
+        self::assertFalse($policy->isEmpty());
+        self::assertTrue($policy->hasAge());
+        self::assertFalse($policy->hasFieldFilters());
+    }
+
+    #[Test]
+    public function it_labels_its_age(): void
+    {
+        self::assertSame('12h', RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => 12])->ageLabel());
+        self::assertSame('7d', RetentionPolicy::fromArray(['name' => 'x', 'older_than_days' => 7])->ageLabel());
+        self::assertNull(RetentionPolicy::fromArray(['name' => 'x'])->ageLabel());
+    }
+
+    #[Test]
+    public function it_matches_by_hours_within_the_same_day(): void
+    {
+        $policy = RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => 4]);
+        $old    = (new \DateTimeImmutable('now'))->modify('-5 hours')->format(\DateTimeInterface::RFC3339_EXTENDED);
+        $recent = (new \DateTimeImmutable('now'))->modify('-3 hours')->format(\DateTimeInterface::RFC3339_EXTENDED);
+
+        self::assertTrue($policy->matchesEntry($this->makeEntry(timestamp: $old)));
+        self::assertFalse($policy->matchesEntry($this->makeEntry(timestamp: $recent)));
+    }
+
     // ──────────────────────────────────────────────────────────────────────────
     // matchesEntry — date filter
     // ──────────────────────────────────────────────────────────────────────────
