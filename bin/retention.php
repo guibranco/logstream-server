@@ -118,7 +118,7 @@ if (isset($opts['list'])) {
     echo "Configured policies ({$source}):\n";
     foreach ($policies as $policy) {
         $parts = ["  * {$policy->name}"];
-        if ($policy->olderThanDays !== null) { $parts[] = "older_than={$policy->olderThanDays}d"; }
+        if ($policy->hasAge())              { $parts[] = "older_than={$policy->ageLabel()}"; }
         if ($policy->appKey !== null)         { $parts[] = "app_key={$policy->appKey}"; }
         if ($policy->appId !== null)          { $parts[] = "app_id={$policy->appId}"; }
         if ($policy->level !== null)          { $parts[] = "level={$policy->level}"; }

@@ -35,6 +35,7 @@ final class DatabaseRetentionPolicyRepositoryTest extends TestCase
                 message_regex    TEXT          NULL,
                 message_glob     TEXT          NULL,
                 older_than_days  INTEGER       NULL,
+                older_than_hours INTEGER       NULL,
                 created_at       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
             )',
@@ -134,7 +135,21 @@ final class DatabaseRetentionPolicyRepositoryTest extends TestCase
         self::assertNull($this->repo->find('x')->transport);
     }
 
-    // ── delete ────────────────────────────────────────────────────────────────
+    #[Test]
+    public function it_round_trips_hours_and_switches_between_days_and_hours(): void
+    {
+        $this->repo->create(RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => 12]));
+        $found = $this->repo->find('x');
+        self::assertSame(12, $found->olderThanHours);
+        self::assertNull($found->olderThanDays);
+
+        $this->repo->update(RetentionPolicy::fromArray(['name' => 'x', 'older_than_days' => 3]));
+        $found = $this->repo->find('x');
+        self::assertSame(3, $found->olderThanDays);
+        self::assertNull($found->olderThanHours);
+    }
+
+        // ── delete ────────────────────────────────────────────────────────────────
 
     #[Test]
     public function it_deletes_a_policy(): void

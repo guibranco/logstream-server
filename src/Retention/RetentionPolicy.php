@@ -19,12 +19,30 @@ final class RetentionPolicy
         public readonly ?string $messageRegex  = null,
         public readonly ?string $messageGlob   = null,
         public readonly ?int    $olderThanDays = null,
-    ) {}
+        /**
+         * Rolling age in hours (now − N hours), for ages shorter than whole days.
+         * Mutually exclusive with $olderThanDays.
+         */
+        public readonly ?int    $olderThanHours = null,
+    ) {
+        if ($olderThanDays !== null && $olderThanHours !== null) {
+            throw new \InvalidArgumentException('Set older_than_days or older_than_hours, not both.');
+        }
+        if ($olderThanHours !== null && $olderThanHours < 1) {
+            throw new \InvalidArgumentException('older_than_hours must be at least 1.');
+        }
+    }
 
     // ──────────────────────────────────────────────────────────────────────────
 
     public function getCutoffDate(): ?\DateTimeImmutable
     {
+        // "older_than_hours: N" is a rolling window: entries timestamped before
+        // now − N hours are removed, so the cutoff moves with every run.
+        if ($this->olderThanHours !== null) {
+            return (new \DateTimeImmutable('now'))->modify("-{$this->olderThanHours} hours");
+        }
+
         if ($this->olderThanDays === null) {
             return null;
         }
@@ -33,6 +51,22 @@ final class RetentionPolicy
         // strictly older than N days": entries timestamped before today-N 00:00:00
         // are removed; entries from today-N 00:00:00 onwards are kept.
         return (new \DateTimeImmutable('today'))->modify("-{$this->olderThanDays} days");
+    }
+
+    /** True when the policy has an age criterion (in days or in hours). */
+    public function hasAge(): bool
+    {
+        return $this->olderThanDays !== null || $this->olderThanHours !== null;
+    }
+
+    /** The age criterion for display and logs: "7d", "12h", or null. */
+    public function ageLabel(): ?string
+    {
+        return match (true) {
+            $this->olderThanHours !== null => "{$this->olderThanHours}h",
+            $this->olderThanDays !== null  => "{$this->olderThanDays}d",
+            default                        => null,
+        };
     }
 
     /** True if at least one field filter (non-date) is set. */
@@ -50,7 +84,7 @@ final class RetentionPolicy
     /** True when no filter at all is set — such a policy must never delete anything. */
     public function isEmpty(): bool
     {
-        return !$this->hasFieldFilters() && $this->olderThanDays === null;
+        return !$this->hasFieldFilters() && !$this->hasAge();
     }
 
     /**
@@ -80,8 +114,32 @@ final class RetentionPolicy
             transport:     self::parseTransport($str('transport')),
             messageRegex:  $str('message_regex'),
             messageGlob:   $str('message_glob'),
-            olderThanDays: isset($data['older_than_days']) ? (int) $data['older_than_days'] : null,
+            // Days keep their lenient cast so existing stored policies still load.
+            olderThanDays:  isset($data['older_than_days']) ? (int) $data['older_than_days'] : null,
+            olderThanHours: self::parseHours($data),
         );
+    }
+
+    /**
+     * A whole number, or null when absent/empty. Anything else is rejected rather
+     * than cast: "12h" silently becoming 12 days would keep or delete the wrong data.
+     *
+     * @throws \InvalidArgumentException
+     */
+    private static function parseHours(array $data): ?int
+    {
+        $key = 'older_than_hours';
+        $raw = $data[$key] ?? null;
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+        if (is_int($raw) || (is_string($raw) && preg_match('/^\d+$/', trim($raw)) === 1)) {
+            return (int) $raw;
+        }
+        if (is_float($raw) && floor($raw) === $raw) {
+            return (int) $raw;
+        }
+        throw new \InvalidArgumentException("{$key} must be a whole number.");
     }
 
     /**

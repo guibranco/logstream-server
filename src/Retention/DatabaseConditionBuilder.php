@@ -29,9 +29,10 @@ final class DatabaseConditionBuilder
         $params     = [];
         $p          = static fn(string $name): string => ':' . $name . $suffix;
 
-        if ($includeCutoff && $policy->olderThanDays !== null) {
+        $cutoff = $includeCutoff ? $policy->getCutoffDate() : null;
+        if ($cutoff !== null) {
             $conditions[]           = 'timestamp < ' . $p('cutoff');
-            $params[$p('cutoff')]   = $policy->getCutoffDate()->format('Y-m-d H:i:s');
+            $params[$p('cutoff')]   = $cutoff->format('Y-m-d H:i:s');
         }
 
         if ($policy->appKey !== null) {

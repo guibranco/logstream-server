@@ -442,6 +442,14 @@ components:
           minimum: 1
           description: Delete entries older than this many days.
           example: 7
+        older_than_hours:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: >
+            Delete entries timestamped before now minus this many hours (a rolling
+            window). Mutually exclusive with `older_than_days`.
+          example: 12
 
     RetentionPolicyInput:
       type: object
@@ -476,7 +484,15 @@ components:
         older_than_days:
           type: integer
           minimum: 1
+          description: Age cut at midnight N days ago. Mutually exclusive with `older_than_hours`.
           example: 7
+        older_than_hours:
+          type: integer
+          minimum: 1
+          description: >
+            Rolling age: entries before now minus N hours. Mutually exclusive with
+            `older_than_days` (setting both is rejected with 400).
+          example: 12
 
     RetentionPolicyResult:
       type: object
@@ -510,9 +526,9 @@ components:
           format: date-time
           nullable: true
           description: >
-            The computed cutoff timestamp used for this run (midnight N days ago).
-            Entries **before** this date are eligible for deletion. Absent when the
-            policy has no `older_than_days` constraint.
+            The computed cutoff timestamp used for this run (midnight N days ago,
+            or now minus N hours for `older_than_hours`). Entries **before** this
+            date are eligible for deletion. Absent when the policy has no age.
           example: "2025-01-08T00:00:00+00:00"
         dry_run:
           type: boolean
@@ -615,7 +631,13 @@ components:
         older_than_days:
           type: integer
           nullable: true
-          description: Marker position; null means the policy applies at any age.
+          description: >
+            Marker position in days; null (with no `older_than_hours`) means the
+            policy applies at any age.
+        older_than_hours:
+          type: integer
+          nullable: true
+          description: Marker position for a rolling age in hours; absent on older servers.
         active:
           type: boolean
           description: False for a policy with no criteria, which never deletes anything.
@@ -833,6 +855,14 @@ components:
                 filter and a retention policy criterion. Older servers ignore
                 `transport` on a policy, which would widen it to every
                 transport, so clients should only offer it when this is set.
+              example: true
+            retention_hours:
+              type: boolean
+              description: |
+                True when retention policies accept `older_than_hours`. Older
+                servers ignore it, which would leave the policy with no age
+                (deleting matches at any age), so clients should only offer
+                hour ages when this is set.
               example: true
         self_logging:
           type: object

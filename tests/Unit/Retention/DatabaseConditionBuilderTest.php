@@ -34,6 +34,29 @@ final class DatabaseConditionBuilderTest extends TestCase
     }
 
     #[Test]
+    public function it_builds_an_hour_cutoff_condition(): void
+    {
+        [$conditions, $params] = DatabaseConditionBuilder::build(
+            RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => 12]),
+        );
+
+        self::assertSame(['timestamp < :cutoff'], $conditions);
+        $expected = (new \DateTimeImmutable('now'))->modify('-12 hours')->getTimestamp();
+        self::assertEqualsWithDelta($expected, (new \DateTimeImmutable($params[':cutoff']))->getTimestamp(), 5);
+    }
+
+    #[Test]
+    public function it_leaves_the_hour_cutoff_out_when_asked(): void
+    {
+        [$conditions] = DatabaseConditionBuilder::build(
+            RetentionPolicy::fromArray(['name' => 'x', 'older_than_hours' => 12]),
+            includeCutoff: false,
+        );
+
+        self::assertSame([], $conditions);
+    }
+
+    #[Test]
     public function it_builds_an_app_key_condition(): void
     {
         [$conditions, $params] = DatabaseConditionBuilder::build(

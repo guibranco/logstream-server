@@ -31,9 +31,9 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
     {
         $stmt = $this->db->pdo()->prepare(
             'INSERT INTO retention_policies
-                (name, app_key, app_id, level, category, transport, message_regex, message_glob, older_than_days)
+                (name, app_key, app_id, level, category, transport, message_regex, message_glob, older_than_days, older_than_hours)
              VALUES
-                (:name, :app_key, :app_id, :level, :category, :transport, :message_regex, :message_glob, :older_than_days)',
+                (:name, :app_key, :app_id, :level, :category, :transport, :message_regex, :message_glob, :older_than_days, :older_than_hours)',
         );
         $stmt->execute($this->policyToParams($policy));
     }
@@ -50,6 +50,7 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
                  message_regex   = :message_regex,
                  message_glob    = :message_glob,
                  older_than_days = :older_than_days,
+                 older_than_hours = :older_than_hours,
                  updated_at      = CURRENT_TIMESTAMP
              WHERE name = :name',
         );
@@ -76,6 +77,8 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
             'message_regex'   => $row['message_regex'] ?? null,
             'message_glob'    => $row['message_glob'] ?? null,
             'older_than_days' => isset($row['older_than_days']) ? (int) $row['older_than_days'] : null,
+            // Absent before migration 011: such rows simply have no hour age.
+            'older_than_hours' => isset($row['older_than_hours']) ? (int) $row['older_than_hours'] : null,
         ]);
     }
 
@@ -91,6 +94,7 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
             ':message_regex'   => $policy->messageRegex,
             ':message_glob'    => $policy->messageGlob,
             ':older_than_days' => $policy->olderThanDays,
+            ':older_than_hours' => $policy->olderThanHours,
         ];
     }
 }

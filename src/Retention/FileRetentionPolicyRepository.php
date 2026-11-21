@@ -124,6 +124,7 @@ final class FileRetentionPolicyRepository implements RetentionPolicyRepositoryIn
             'message_regex'   => $policy->messageRegex,
             'message_glob'    => $policy->messageGlob,
             'older_than_days' => $policy->olderThanDays,
+            'older_than_hours' => $policy->olderThanHours,
         ], fn($v) => $v !== null);
     }
 }
