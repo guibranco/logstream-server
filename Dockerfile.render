@@ -1,4 +1,4 @@
-FROM php:8.5.12-cli
+FROM php:8.6.0-cli
 
 # Single-port image for PaaS hosts that route one public port (Render, Railway,
 # Azure Container Apps…). Caddy listens on $PORT and splits the traffic:
