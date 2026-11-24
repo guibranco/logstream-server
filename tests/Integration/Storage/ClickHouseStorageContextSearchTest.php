@@ -31,6 +31,12 @@ final class ClickHouseStorageContextSearchTest extends ContextSearchTestCase
         return $this->storage;
     }
 
+    protected function timestamp(): string
+    {
+        // Within the table's 35-day TTL, or the rows are dropped right after the insert.
+        return (new \DateTimeImmutable('-1 day', new \DateTimeZone('UTC')))->format('Y-m-d\TH:i:s.000\Z');
+    }
+
     #[Test]
     public function search_matches_whole_words_only(): void
     {

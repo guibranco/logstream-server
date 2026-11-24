@@ -23,8 +23,8 @@ abstract class StorageContractTestCase extends TestCase
     /** A fresh, empty storage for each test. */
     abstract protected function storage(): StorageInterface;
 
-    /** @var array<string, LogEntry> suffix → entry */
-    private array $seeded = [];
+    /** @var array<string, LogEntry> suffix → entry, as written */
+    protected array $seeded = [];
 
     protected function setUp(): void
     {
@@ -34,28 +34,28 @@ abstract class StorageContractTestCase extends TestCase
                 'message' => 'Card declined for order 42', 'message_template' => 'Card declined for order {orderId}',
                 'context' => ['orderId' => 42, 'user' => ['role' => 'admin'], 'flag' => true, 'note' => null],
                 'user_agent' => 'curl/8.5.0', 'sender_ip' => '203.0.113.7', 'transport' => 'udp',
-                'trace_id' => 'trace-a', 'batch_id' => 'batch-1', 'timestamp' => '2026-11-20T10:00:00.000001Z',
+                'trace_id' => 'trace-a', 'batch_id' => 'batch-1', 'timestamp' => self::at(0, '10:00:00.000001'),
             ],
             '02' => [
                 'app_key' => 'billing-api', 'app_id' => 'vinhedo6', 'level' => 'warning', 'category' => 'Payments',
                 'message' => 'Refund issued', 'context' => ['orderId' => 7, 'user' => ['role' => 'bot']],
                 'transport' => 'tcp', 'trace_id' => 'trace-a', 'batch_id' => 'batch-1',
-                'timestamp' => '2026-11-20T11:00:00.000000Z',
+                'timestamp' => self::at(0, '11:00:00'),
             ],
             '03' => [
                 'app_key' => 'orders-api', 'app_id' => 'vinhedo5', 'level' => 'info', 'category' => 'general',
                 'message' => 'São Paulo shipment created', 'context' => null,
-                'trace_id' => 'trace-b', 'timestamp' => '2026-11-21T09:00:00.000000Z',
+                'trace_id' => 'trace-b', 'timestamp' => self::at(1, '09:00:00'),
             ],
             '04' => [
                 'app_key' => 'orders-api', 'app_id' => 'vinhedo5', 'level' => 'critical', 'category' => 'Database',
                 'message' => 'Database CARD table locked', 'context' => ['orderId' => '42'],
-                'trace_id' => 'trace-c', 'timestamp' => '2026-11-22T00:00:00.000000Z',
+                'trace_id' => 'trace-c', 'timestamp' => self::at(2, '00:00:00'),
             ],
             '05' => [
                 'app_key' => 'users-api', 'app_id' => 'vinhedo6', 'level' => 'debug', 'category' => 'Auth',
                 'message' => 'Login ok', 'context' => ['user' => ['role' => 'admin']],
-                'trace_id' => 'trace-d', 'timestamp' => '2026-11-22T12:30:00.500000Z',
+                'trace_id' => 'trace-d', 'timestamp' => self::at(2, '12:30:00.5'),
             ],
         ];
 
@@ -65,7 +65,7 @@ abstract class StorageContractTestCase extends TestCase
                 'id'         => '01JDXS5G8QW3Z6V9N2M4K7H1' . $suffix,
                 'batch_id'   => null,
                 'user_agent' => null,
-                'created_at' => '2026-11-23T00:00:00.000000Z',
+                'created_at' => self::at(3, '00:00:00'),
             ]);
         }
 
@@ -99,8 +99,8 @@ abstract class StorageContractTestCase extends TestCase
         yield 'context boolean'             => [['context' => ContextFilter::fromQuery(['flag' => 'true'], null)], ['01']];
         yield 'context null value'          => [['context' => ContextFilter::fromQuery(['note' => 'null'], null)], ['01']];
         yield 'context_not keeps absent'    => [['context' => ContextFilter::fromQuery(null, ['user.role' => 'admin'])], ['04', '03', '02']];
-        yield 'date_from'                   => [['date_from' => '2026-11-21 00:00:00'], ['05', '04', '03']];
-        yield 'date range, both inclusive'  => [['date_from' => '2026-11-20 11:00:00', 'date_to' => '2026-11-22 00:00:00'], ['04', '03', '02']];
+        yield 'date_from'                   => [['date_from' => self::at(1, '00:00:00', sql: true)], ['05', '04', '03']];
+        yield 'date range, both inclusive'  => [['date_from' => self::at(0, '11:00:00', sql: true), 'date_to' => self::at(2, '00:00:00', sql: true)], ['04', '03', '02']];
         yield 'combined'                    => [['app_key' => 'billing-api', 'context' => ContextFilter::fromQuery(['orderId' => '42'], null)], ['01']];
     }
 
@@ -162,13 +162,28 @@ abstract class StorageContractTestCase extends TestCase
         $entry = LogEntry::fromArray([
             'id' => '01JDXS5G8QW3Z6V9N2M4K7H106', 'trace_id' => 'trace-e', 'app_key' => 'billing-api',
             'app_id' => 'vinhedo5', 'level' => 'notice', 'message' => 'Single entry', 'batch_id' => null, 'user_agent' => null,
-            'timestamp' => '2026-11-23T08:00:00.000000Z',
+            'timestamp' => self::at(3, '08:00:00'),
         ]);
 
         $this->storage()->save($entry);
 
         self::assertSame($entry->toArray(), $this->storage()->findById($entry->id)?->toArray());
         self::assertSame(6, $this->storage()->search(SearchFilters::none())['total']);
+    }
+
+    /**
+     * A moment $day days after the first seeded day, which is four days ago:
+     * recent enough for ClickHouse's 35-day TTL, never in the future.
+     *
+     * @param bool $sql "Y-m-d H:i:s" (as filters send it) instead of ISO 8601 with Z.
+     */
+    protected static function at(int $day, string $time, bool $sql = false): string
+    {
+        $date = (new \DateTimeImmutable('today -4 days', new \DateTimeZone('UTC')))
+            ->modify("+{$day} days")
+            ->format('Y-m-d');
+
+        return $sql ? "{$date} {$time}" : "{$date}T{$time}Z";
     }
 
     /**

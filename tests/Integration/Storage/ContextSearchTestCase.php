@@ -22,6 +22,15 @@ abstract class ContextSearchTestCase extends TestCase
 {
     abstract protected function storage(): StorageInterface;
 
+    /**
+     * When the seeded entries happened. ClickHouse overrides it with a recent
+     * date: its 35-day TTL drops older parts as soon as they are written.
+     */
+    protected function timestamp(): string
+    {
+        return '2026-03-01T10:00:00.000Z';
+    }
+
     protected function setUp(): void
     {
         $storage = $this->storage();
@@ -127,8 +136,8 @@ abstract class ContextSearchTestCase extends TestCase
             'category'   => 'payments',
             'message'    => $message,
             'context'    => $context,
-            'timestamp'  => '2026-03-01T10:00:00.000Z',
-            'created_at' => '2026-03-01T10:00:00.000Z',
+            'timestamp'  => $this->timestamp(),
+            'created_at' => $this->timestamp(),
         ]);
     }
 }
