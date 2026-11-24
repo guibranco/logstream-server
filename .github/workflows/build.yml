@@ -166,9 +166,12 @@ jobs:
             "$IMAGE"
           for _ in $(seq 1 60); do
             if curl -sf "$CLICKHOUSE_URL/ping" > /dev/null; then exit 0; fi
+            if [[ "$(docker inspect -f '{{.State.Running}}' clickhouse)" != "true" ]]; then
+              echo "::error::ClickHouse exited during startup"
+              break
+            fi
             sleep 2
           done
-          docker logs clickhouse
           exit 1
 
       - name: 🧪 Dry run lists the pending files
@@ -187,7 +190,14 @@ jobs:
 
       - name: 📋 ClickHouse logs on failure
         if: failure()
-        run: docker logs clickhouse 2>&1 | tail -100
+        run: |
+          docker ps -a --filter name=clickhouse
+          docker logs clickhouse 2>&1 | tail -50
+          # The server logs to files inside the container; docker cp works even after it exits.
+          for f in clickhouse-server.err.log clickhouse-server.log; do
+            echo "──── $f"
+            docker cp "clickhouse:/var/log/clickhouse-server/$f" - 2>/dev/null | tar -xO | tail -60 || true
+          done
 
   # ── Integration: spin up Docker, run endpoint tests ──────────────────────────
   integration_tests:

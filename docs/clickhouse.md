@@ -104,9 +104,14 @@ sudo systemctl restart clickhouse-server
 | `index_mark_cache_size` | 64 MiB | — |
 | `uncompressed_cache_size` | 128 MiB | — |
 | `background_pool_size` | 2 | 16 |
+| `merge_tree` free-slot thresholds (`…_lower_max_size_of_merge`, `…_execute_mutation`, `…_execute_optimize_entire_partition`) | 2 | 8, 20, 25 |
 | `max_concurrent_queries` | 20 | — |
 | `metric_log`, `asynchronous_metric_log`, `trace_log` | removed | enabled |
 | `query_log` | kept 7 days | kept forever |
+
+The `merge_tree` thresholds must fit the smaller merge pool (2 threads × a
+concurrency ratio of 2 = 4 slots). With the defaults, ClickHouse refuses to load
+MergeTree tables and doesn't start.
 
 `users.d/logstream.xml` (default profile): `max_threads` 2 and `max_memory_usage`
 1 GiB per query.
