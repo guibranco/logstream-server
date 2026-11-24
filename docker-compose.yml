@@ -21,6 +21,10 @@ services:
       APP_TOKEN_PREFIX:  ${APP_TOKEN_PREFIX-lss_}
       STORAGE_TYPE: ${STORAGE_TYPE:-mariadb}
       LOG_STORE:    ${LOG_STORE:-}
+      CLICKHOUSE_URL:      ${CLICKHOUSE_URL:-http://clickhouse:8123}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-logstream}
+      CLICKHOUSE_USER:     ${CLICKHOUSE_USER:-logstream}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-test}
       INGEST_MODE:  ${INGEST_MODE:-buffered}
       DB_DRIVER:    ${DB_DRIVER:-async}
       SELF_LOG_ENABLED: ${SELF_LOG_ENABLED:-true}

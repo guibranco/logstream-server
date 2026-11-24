@@ -37,6 +37,8 @@ final class StorageConfigTest extends TestCase
     {
         yield 'clients in MariaDB, entries in files' => ['mariadb', 'file'];
         yield 'single key, entries in MariaDB'       => ['file', 'mariadb'];
+        yield 'clients in MariaDB, entries in ClickHouse' => ['mariadb', 'clickhouse'];
+        yield 'single key, entries in ClickHouse'    => ['file', 'clickhouse'];
     }
 
     #[Test]
@@ -48,7 +50,7 @@ final class StorageConfigTest extends TestCase
         self::assertSame($control, $config->controlPlane);
         self::assertSame($logs, $config->logStore);
         self::assertFalse($config->isUnified());
-        self::assertTrue($config->usesMariaDb());
+        self::assertSame($control === 'mariadb' || $logs === 'mariadb', $config->usesMariaDb());
     }
 
     /** @return iterable<string, array{array<string, string>, string}> */
@@ -57,8 +59,8 @@ final class StorageConfigTest extends TestCase
         yield 'unknown storage type'    => [['STORAGE_TYPE' => 'postgres'], "STORAGE_TYPE must be one of: file, mariadb (got 'postgres')"];
         // Used to fall back to file mode silently; now refused instead of switching backends.
         yield 'storage type wrong case' => [['STORAGE_TYPE' => 'MariaDB'], 'STORAGE_TYPE must be one of'];
-        yield 'unknown log store'       => [['LOG_STORE' => 'loki'], "LOG_STORE must be one of: file, mariadb (got 'loki')"];
-        yield 'clickhouse not yet'      => [['STORAGE_TYPE' => 'mariadb', 'LOG_STORE' => 'clickhouse'], 'not available in this version yet'];
+        yield 'unknown log store'       => [['LOG_STORE' => 'loki'], "LOG_STORE must be one of: file, mariadb, clickhouse (got 'loki')"];
+        yield 'clickhouse is not a control plane' => [['STORAGE_TYPE' => 'clickhouse'], 'STORAGE_TYPE must be one of: file, mariadb'];
     }
 
     #[Test]
