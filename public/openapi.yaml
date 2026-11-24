@@ -803,7 +803,7 @@ components:
           example: file
         log_store:
           type: string
-          enum: [file, mariadb]
+          enum: [file, mariadb, clickhouse]
           description: >
             Where log entries are written, searched and pruned (`LOG_STORE`).
             Same as `storage_type` unless `LOG_STORE` is set.
@@ -1261,7 +1261,10 @@ components:
       properties:
         status:
           type: string
-          enum: [ok]
+          enum: [ok, degraded]
+          description: >
+            `degraded` when the log store reports its backend unreachable
+            (see `log_store`). The response stays `200` either way.
           example: ok
         time:
           type: string
@@ -1270,6 +1273,21 @@ components:
         ws_connections:
           type: integer
           example: 2
+        log_store:
+          type: object
+          description: Present only for log stores that check a separate backend (ClickHouse).
+          required: [type, reachable, latency_ms]
+          properties:
+            type:
+              type: string
+              enum: [clickhouse]
+            reachable:
+              type: boolean
+              description: Whether ClickHouse answered `/ping` within 2 seconds.
+            latency_ms:
+              type: number
+              nullable: true
+              example: 1.4
         ingest:
           $ref: '#/components/schemas/IngestStats'
         udp:

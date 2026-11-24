@@ -1,9 +1,11 @@
 # ClickHouse log store
 
-> **Status:** schema and migrations only. `LOG_STORE=clickhouse` is still rejected
-> at boot until the storage and batch writer land
-> ([#157](https://github.com/guibranco/logstream-server/issues/157)). Epic:
-> [#154](https://github.com/guibranco/logstream-server/issues/154).
+> **Status:** usable for writing and searching. Still to come
+> ([#154](https://github.com/guibranco/logstream-server/issues/154)): the
+> non-blocking batch writer (#157; buffered ingest uses blocking HTTP inserts
+> meanwhile), retention policies (#158; the table's 35-day TTL applies
+> meanwhile, and `bin/retention.php` / `bin/prune.php` exit with a message), and
+> the MariaDB → ClickHouse copy (#159).
 
 ClickHouse holds **log entries only**. Clients, retention policies and the
 retention log stay in the control-plane database (`STORAGE_TYPE`). See
@@ -13,6 +15,38 @@ Pinned version: **ClickHouse 26.8 LTS** (supported until August 2027). The same
 tag is used by `docker-compose.yml` and CI.
 
 ---
+
+## Using it
+
+```bash
+LOG_STORE=clickhouse
+CLICKHOUSE_URL=http://127.0.0.1:8123   # HTTP interface, no path
+CLICKHOUSE_DATABASE=logstream
+CLICKHOUSE_USER=logstream
+CLICKHOUSE_PASSWORD=…
+CLICKHOUSE_TIMEOUT=10                  # seconds, to connect and per answer
+```
+
+The server pings ClickHouse at startup and exits if it can't reach it (like
+MariaDB). Afterwards, `GET /api/health` includes a `log_store` block and reports
+`"status": "degraded"` while ClickHouse is unreachable, still with HTTP 200.
+
+The server talks to the HTTP interface with PHP's own HTTP streams (no extra
+extension). Every search value is sent as a server-side query parameter, never
+inside the SQL. Searches answer exactly as MariaDB does; the same contract tests
+run on file, MariaDB and ClickHouse:
+
+| Filter | ClickHouse |
+|---|---|
+| `app_key`, `level`, `trace_id`, … | `=` / `IN`; an unknown `level` matches nothing |
+| `search`, `category`, `user_agent` | case-insensitive "contains" (`lower(…) LIKE` for ASCII, so the n-gram index can help) |
+| `context[a.b]=v` | the value at that path, unquoted, equals `v` (`42`, `true`, `null` as written); `context_not` also keeps entries without the path |
+| `context_search` | whole words, like MariaDB's FULLTEXT (`card` doesn't match `card_declined`) |
+| `date_from`, `date_to` | inclusive, UTC |
+
+Reads use `FINAL`, so an entry written twice by a retried batch is returned once.
+Writes use ClickHouse's asynchronous inserts, so many small inserts (sync ingest)
+don't create a part each.
 
 ## Schema
 

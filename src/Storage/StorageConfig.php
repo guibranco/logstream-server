@@ -10,10 +10,11 @@ namespace LogService\Storage;
  *   STORAGE_TYPE (control plane): write auth, clients, retention policies and
  *                the retention log. "file" or "mariadb".
  *   LOG_STORE    (log store): where log entries are written, searched and
- *                pruned. "file" or "mariadb"; defaults to STORAGE_TYPE, so
- *                existing deployments keep working without a new setting.
+ *                pruned. "file", "mariadb" or "clickhouse"; defaults to
+ *                STORAGE_TYPE, so existing deployments keep working without a
+ *                new setting.
  *
- * Both MariaDB roles use the same DB_* settings.
+ * Both MariaDB roles use the same DB_* settings; ClickHouse uses CLICKHOUSE_*.
  */
 final class StorageConfig
 {
@@ -22,7 +23,7 @@ final class StorageConfig
     public const CLICKHOUSE = 'clickhouse';
 
     public const CONTROL_PLANES = [self::FILE, self::MARIADB];
-    public const LOG_STORES     = [self::FILE, self::MARIADB];
+    public const LOG_STORES     = [self::FILE, self::MARIADB, self::CLICKHOUSE];
 
     private function __construct(
         public readonly string $controlPlane,
@@ -41,12 +42,6 @@ final class StorageConfig
                 implode(', ', self::CONTROL_PLANES),
                 $controlPlane,
             ));
-        }
-
-        if ($logStore === self::CLICKHOUSE) {
-            throw new \InvalidArgumentException(
-                'LOG_STORE=clickhouse is not available in this version yet (see guibranco/logstream-server#154)',
-            );
         }
 
         if (!in_array($logStore, self::LOG_STORES, true)) {

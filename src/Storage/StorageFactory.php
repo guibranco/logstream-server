@@ -29,6 +29,9 @@ use LogService\Retention\RetentionEngineInterface;
 use LogService\Retention\RetentionLogRepositoryInterface;
 use LogService\Retention\RetentionPolicyRepositoryInterface;
 use LogService\Retention\RetentionVolumeAnalyzerInterface;
+use LogService\Storage\ClickHouse\ClickHouseClient;
+use LogService\Storage\ClickHouse\ClickHouseException;
+use LogService\Storage\ClickHouse\ClickHouseSettings;
 
 /**
  * Builds the storage-dependent services for bin/server.php, bin/retention.php
@@ -48,6 +51,13 @@ final class StorageFactory
     private ?Connection $logDb     = null;
     private ?WriteAuthInterface $writeAuth = null;
     private readonly MariaDbSettings $db;
+    /**
+     * Set when LOG_STORE=clickhouse. Built at construction (no I/O yet), so a
+     * bad CLICKHOUSE_* setting fails at boot.
+     */
+    private readonly ?ClickHouseClient $clickhouse;
+
+    private const NO_RETENTION = 'Retention for LOG_STORE=clickhouse is not available yet (guibranco/logstream-server#158)';
 
     /**
      * @param array<string, mixed> $env         Usually $_ENV after Dotenv.
@@ -58,7 +68,10 @@ final class StorageFactory
         private readonly array $env,
         private readonly string $projectRoot,
     ) {
-        $this->db = MariaDbSettings::fromEnv($env);
+        $this->db         = MariaDbSettings::fromEnv($env);
+        $this->clickhouse = $config->logStore === StorageConfig::CLICKHOUSE
+            ? new ClickHouseClient(ClickHouseSettings::fromEnv($env))
+            : null;
     }
 
     /** @param array<string, mixed> $env */
@@ -138,26 +151,33 @@ final class StorageFactory
 
     // ─── Log store ────────────────────────────────────────────────────────────
 
-    public function logStoreIsDatabase(): bool
-    {
-        return $this->config->logStore === StorageConfig::MARIADB;
-    }
-
     public function logStorage(): StorageInterface
     {
-        return $this->logStoreIsDatabase()
-            ? new MariaDBStorage($this->logDb())
-            : new FileStorage($this->logPath());
+        return match ($this->config->logStore) {
+            StorageConfig::MARIADB    => new MariaDBStorage($this->logDb()),
+            StorageConfig::CLICKHOUSE => new ClickHouseStorage($this->clickhouse),
+            default                   => new FileStorage($this->logPath()),
+        };
     }
 
     /** Human-readable location of the log store, for startup messages. */
     public function logStoreLabel(): string
     {
-        if (!$this->logStoreIsDatabase()) {
-            return "File ({$this->logPath()})";
-        }
+        return match ($this->config->logStore) {
+            StorageConfig::MARIADB    => "MariaDB ({$this->db->label()})",
+            StorageConfig::CLICKHOUSE => "ClickHouse ({$this->clickhouse?->settings->label()})",
+            default                   => "File ({$this->logPath()})",
+        };
+    }
 
-        return "MariaDB ({$this->db->label()})";
+    /**
+     * Whether the retention engine, pruner and volume analyzer exist for this
+     * log store. Not yet for ClickHouse (guibranco/logstream-server#158); its
+     * 35-day TTL backstop still removes old entries meanwhile.
+     */
+    public function logStoreSupportsRetention(): bool
+    {
+        return $this->config->logStore !== StorageConfig::CLICKHOUSE;
     }
 
     /**
@@ -166,7 +186,7 @@ final class StorageFactory
      */
     public function batchWriter(IngestConfig $ingest, StorageInterface $storage): BatchWriterInterface
     {
-        if ($this->logStoreIsDatabase() && $ingest->dbDriver === IngestConfig::DRIVER_ASYNC) {
+        if ($this->config->logStore === StorageConfig::MARIADB && $ingest->dbDriver === IngestConfig::DRIVER_ASYNC) {
             return AsyncMysqlBatchWriter::connect(
                 host:     $this->db->host,
                 port:     $this->db->port,
@@ -176,29 +196,40 @@ final class StorageFactory
             );
         }
 
-        return new StorageBatchWriter($storage, $this->logStoreIsDatabase() ? 'pdo-mysql' : 'file');
+        // ClickHouse: blocking HTTP inserts for now; the non-blocking writer is the next step of #157.
+        return new StorageBatchWriter($storage, match ($this->config->logStore) {
+            StorageConfig::MARIADB    => 'pdo-mysql',
+            StorageConfig::CLICKHOUSE => 'clickhouse-http',
+            default                   => 'file',
+        });
     }
 
     public function retentionEngine(): RetentionEngineInterface
     {
-        return $this->logStoreIsDatabase()
-            ? new DatabaseRetentionEngine($this->logDb())
-            : new FileRetentionEngine($this->logPath());
+        return match ($this->config->logStore) {
+            StorageConfig::MARIADB    => new DatabaseRetentionEngine($this->logDb()),
+            StorageConfig::CLICKHOUSE => throw new \LogicException(self::NO_RETENTION),
+            default                   => new FileRetentionEngine($this->logPath()),
+        };
     }
 
     public function pruner(): PrunerInterface
     {
-        return $this->logStoreIsDatabase()
-            ? new DatabasePruner($this->logDb())
-            : new FileStoragePruner($this->logPath());
+        return match ($this->config->logStore) {
+            StorageConfig::MARIADB    => new DatabasePruner($this->logDb()),
+            StorageConfig::CLICKHOUSE => throw new \LogicException(self::NO_RETENTION),
+            default                   => new FileStoragePruner($this->logPath()),
+        };
     }
 
     /** Uncached; the server wraps it in CachedRetentionVolumeAnalyzer. */
     public function volumeAnalyzer(): RetentionVolumeAnalyzerInterface
     {
-        return $this->logStoreIsDatabase()
-            ? new DatabaseRetentionVolumeAnalyzer($this->logDb())
-            : new FileRetentionVolumeAnalyzer($this->logPath());
+        return match ($this->config->logStore) {
+            StorageConfig::MARIADB    => new DatabaseRetentionVolumeAnalyzer($this->logDb()),
+            StorageConfig::CLICKHOUSE => throw new \LogicException(self::NO_RETENTION),
+            default                   => new FileRetentionVolumeAnalyzer($this->logPath()),
+        };
     }
 
     // ─── Connections ──────────────────────────────────────────────────────────
@@ -212,8 +243,11 @@ final class StorageFactory
         if ($this->controlPlaneIsDatabase()) {
             $this->controlDb()->pdo();
         }
-        if ($this->logStoreIsDatabase()) {
+        if ($this->config->logStore === StorageConfig::MARIADB) {
             $this->logDb()->pdo();
+        }
+        if ($this->clickhouse !== null && !$this->clickhouse->ping()) {
+            throw new ClickHouseException("Cannot reach ClickHouse at {$this->clickhouse->settings->url}");
         }
     }
 

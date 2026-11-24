@@ -102,6 +102,21 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=20
+      # Same tag as docker-compose.yml's clickhouse service.
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.8
+        env:
+          CLICKHOUSE_DB: logstream
+          CLICKHOUSE_USER: logstream
+          CLICKHOUSE_PASSWORD: test
+        ports:
+          - 8123:8123
+        options: >-
+          --ulimit nofile=262144:262144
+          --health-cmd="wget --no-verbose --tries=1 --spider http://127.0.0.1:8123/ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
 
     steps:
       - name: 📥 Checkout code
@@ -125,11 +140,24 @@ jobs:
       - name: 📦 Install PHP dependencies (with dev)
         run: composer install --no-interaction --no-progress
 
+      - name: 🟡 Apply ClickHouse migrations
+        env:
+          CLICKHOUSE_URL: http://127.0.0.1:8123
+          CLICKHOUSE_DATABASE: logstream
+          CLICKHOUSE_USER: logstream
+          CLICKHOUSE_PASSWORD: test
+        run: bash Tools/clickhouse-migration.sh
+
+      # File, MariaDB and ClickHouse run the same contract suite; nothing may skip.
       - name: 🗃️ Run storage integration tests
         env:
           TEST_DB_DSN: "mysql:host=127.0.0.1;port=3306;dbname=logstream_test;charset=utf8mb4"
           TEST_DB_USER: root
           TEST_DB_PASS: test
+          TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
+          CLICKHOUSE_DATABASE: logstream
+          CLICKHOUSE_USER: logstream
+          CLICKHOUSE_PASSWORD: test
         run: vendor/bin/phpunit --testdox --testsuite integration --fail-on-skipped
 
   # ── ClickHouse log store: migrations + schema on a real server ───────────────

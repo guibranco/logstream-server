@@ -188,6 +188,10 @@ services:
       APP_TOKEN_PREFIX:  ${APP_TOKEN_PREFIX-lss_}
       STORAGE_TYPE: ${STORAGE_TYPE:-mariadb}
       LOG_STORE:    ${LOG_STORE:-}
+      CLICKHOUSE_URL:      ${CLICKHOUSE_URL:-http://clickhouse:8123}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-logstream}
+      CLICKHOUSE_USER:     ${CLICKHOUSE_USER:-logstream}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-test}
       DB_HOST:      db
       DB_PORT:      3306
       DB_NAME:      ${DB_NAME:-logservice}
@@ -522,7 +526,8 @@ Add these to your `.env` file (or pass them directly to `docker compose`):
 | `UI_SECRET_PREFIX` | — | Prefix for new UI secrets from `bin/generate-secret.php` (default `lsu_`) |
 | `APP_TOKEN_PREFIX` | — | Prefix for application tokens created or rotated via `/api/clients` (default `lss_`) |
 | `STORAGE_TYPE` | ✅ | Control plane (auth, clients, retention policies): `mariadb` or `file` |
-| `LOG_STORE` | ❌ | Where log entries are kept: `mariadb` or `file` (default: same as `STORAGE_TYPE`) |
+| `LOG_STORE` | ❌ | Where log entries are kept: `mariadb`, `file` or `clickhouse` (default: same as `STORAGE_TYPE`) |
+| `CLICKHOUSE_URL`, `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_TIMEOUT` | With `clickhouse` | See [docs/clickhouse.md](clickhouse.md) |
 | `DB_PASS` | ✅ (mariadb) | MariaDB user password |
 | `DB_ROOT_PASS` | ✅ (mariadb) | MariaDB root password |
 | `DB_NAME` | ❌ | Database name (default: `logservice`) |

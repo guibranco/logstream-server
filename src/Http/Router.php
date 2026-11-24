@@ -25,6 +25,7 @@ use LogService\Retention\CachedRetentionVolumeAnalyzer;
 use LogService\Retention\RetentionRunner;
 use LogService\Retention\RetentionVolumeAnalyzerInterface;
 use LogService\Storage\ContextFilter;
+use LogService\Storage\ReportsHealth;
 use LogService\Storage\SearchFilters;
 use LogService\Storage\StorageInterface;
 use LogService\Udp\UdpConfig;
@@ -542,12 +543,23 @@ final class Router
 
     private function handleHealth(array $cors): Response
     {
-        return $this->json([
-            'status'         => 'ok',
+        // Stores that can check their backend (ClickHouse) report it; an
+        // unreachable one makes the status "degraded" but keeps HTTP 200, so
+        // container health checks don't restart the server over it.
+        $logStore = $this->storage instanceof ReportsHealth ? $this->storage->health() : null;
+
+        $body = [
+            'status'         => $logStore !== null && !$logStore['reachable'] ? 'degraded' : 'ok',
             'time'           => (new \DateTimeImmutable())->format(\DateTimeInterface::RFC3339),
             'ws_connections' => $this->hub->getConnectionCount(),
-            'ingest'         => $this->ingestInfo(withStats: true),
-            'udp'            => $this->udpInfo(withStats: true),
+        ];
+        if ($logStore !== null) {
+            $body['log_store'] = $logStore;
+        }
+
+        return $this->json($body + [
+            'ingest' => $this->ingestInfo(withStats: true),
+            'udp'    => $this->udpInfo(withStats: true),
         ], 200, $cors);
     }
 

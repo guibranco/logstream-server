@@ -20,6 +20,8 @@ use LogService\Retention\FileRetentionLogRepository;
 use LogService\Retention\FileRetentionPolicyRepository;
 use LogService\Retention\FileRetentionVolumeAnalyzer;
 use LogService\Retention\FileStoragePruner;
+use LogService\Storage\ClickHouse\ClickHouseException;
+use LogService\Storage\ClickHouseStorage;
 use LogService\Storage\FileStorage;
 use LogService\Storage\MariaDBStorage;
 use LogService\Storage\StorageFactory;
@@ -118,6 +120,51 @@ final class StorageFactoryTest extends TestCase
     }
 
     #[Test]
+    public function clickhouse_log_store_with_a_mariadb_control_plane(): void
+    {
+        $factory = $this->factory([
+            'STORAGE_TYPE' => 'mariadb', 'LOG_STORE' => 'clickhouse',
+            'CLICKHOUSE_URL' => 'http://ch.internal:8123', 'CLICKHOUSE_DATABASE' => 'logs',
+        ]);
+
+        self::assertInstanceOf(DatabaseWriteAuth::class, $factory->writeAuth());
+        self::assertInstanceOf(DatabaseRetentionPolicyRepository::class, $factory->policyRepository('/unused.json'));
+        self::assertInstanceOf(ClickHouseStorage::class, $factory->logStorage());
+        self::assertSame('ClickHouse (http://ch.internal:8123/logs)', $factory->logStoreLabel());
+        self::assertSame('clickhouse-http', $factory->batchWriter(IngestConfig::fromEnv([]), $factory->logStorage())->name());
+    }
+
+    #[Test]
+    public function clickhouse_has_no_retention_engine_yet(): void
+    {
+        $factory = $this->factory(['LOG_STORE' => 'clickhouse']);
+
+        self::assertFalse($factory->logStoreSupportsRetention());
+        self::assertTrue($this->factory([])->logStoreSupportsRetention());
+
+        foreach (['retentionEngine', 'pruner', 'volumeAnalyzer'] as $method) {
+            try {
+                $factory->{$method}();
+                self::fail("{$method}() should refuse ClickHouse");
+            } catch (\LogicException $e) {
+                self::assertStringContainsString('#158', $e->getMessage());
+            }
+        }
+    }
+
+    #[Test]
+    public function connect_fails_fast_when_clickhouse_is_unreachable(): void
+    {
+        // Port 1 on loopback refuses connections immediately.
+        $factory = $this->factory(['LOG_STORE' => 'clickhouse', 'CLICKHOUSE_URL' => 'http://127.0.0.1:1', 'CLICKHOUSE_TIMEOUT' => '1']);
+
+        $this->expectException(ClickHouseException::class);
+        $this->expectExceptionMessage('Cannot reach ClickHouse at http://127.0.0.1:1');
+
+        $factory->connect();
+    }
+
+    #[Test]
     public function the_batch_writer_goes_through_the_storage_unless_mariadb_async(): void
     {
         $file    = $this->factory([]);
@@ -161,7 +208,7 @@ final class StorageFactoryTest extends TestCase
     {
         $this->expectException(\InvalidArgumentException::class);
 
-        StorageFactory::fromEnv(['LOG_STORE' => 'clickhouse'], $this->dir);
+        StorageFactory::fromEnv(['LOG_STORE' => 'clickhouse', 'CLICKHOUSE_URL' => 'localhost:8123'], $this->dir);
     }
 
     private static function path(object $repository): string

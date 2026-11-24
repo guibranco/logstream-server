@@ -88,6 +88,9 @@ try {
 } catch (\InvalidArgumentException $e) {
     $logger->critical('config', 'APP_TOKEN_PREFIX: ' . $e->getMessage());
     exit(1);
+} catch (\LogService\Storage\ClickHouse\ClickHouseException $e) {
+    $logger->critical('storage', $e->getMessage());
+    exit(1);
 }
 
 $storage     = $storageFactory->logStorage();
@@ -129,6 +132,12 @@ if ($retentionConfigPath !== null) {
     } catch (\Throwable $e) {
         $logger->warning('retention', 'Retention config error: ' . $e->getMessage());
     }
+}
+
+if ($retentionConfig->isEnabled() && !$storageFactory->logStoreSupportsRetention()) {
+    $logger->warning('retention', 'Retention is not available yet for LOG_STORE=' . $logStore
+        . ' (guibranco/logstream-server#158); skipped. The table TTL still removes entries after 35 days.');
+    $retentionConfig = RetentionConfig::disabled();
 }
 
 if ($retentionConfig->isEnabled()) {
