@@ -63,6 +63,10 @@ don't create a part each.
 | `ngrambf_v1` on `lower(message)` | `search=` is a case-insensitive substring match. |
 | `tokenbf_v1` on `lower(context)` | `context_search=` matches whole words, like MariaDB's FULLTEXT index. |
 
+**The TTL is on the entry's own `timestamp`.** An entry that is already older
+than 35 days when it arrives (a client sending backdated logs, or old rows
+copied across in #159) lands in a part that ClickHouse drops almost at once.
+
 `tests/Unit/Storage/ClickHouseSchemaTest.php` fails if `LogEntry` gains a field
 the schema doesn't have.
 

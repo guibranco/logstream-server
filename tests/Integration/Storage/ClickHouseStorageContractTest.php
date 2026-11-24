@@ -35,9 +35,9 @@ final class ClickHouseStorageContractTest extends StorageContractTestCase
     #[Test]
     public function a_retried_batch_is_returned_once(): void
     {
-        // The same entries again, as after a timeout whose insert actually succeeded.
-        $all = $this->storage->search(SearchFilters::none())['entries'];
-        $this->storage->saveMany(array_map(\LogService\Models\LogEntry::fromArray(...), $all));
+        // The same entries again, as the buffer resends them after a timeout
+        // whose insert actually succeeded.
+        $this->storage->saveMany(array_values($this->seeded));
 
         $result = $this->storage->search(SearchFilters::none());
 
