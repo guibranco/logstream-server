@@ -170,6 +170,14 @@ final class SearchFilters
      */
     public function matches(array $entry): bool
     {
+        return $this->matchesFields($entry)
+            && $this->matchesContext(is_array($entry['context'] ?? null) ? $entry['context'] : null)
+            && $this->matchesDates($entry);
+    }
+
+    /** Exact and substring criteria on top-level fields. */
+    private function matchesFields(array $entry): bool
+    {
         foreach ($this->exact as $column => $values) {
             if (!in_array($entry[$column] ?? '', $values, true)) {
                 return false;
@@ -182,27 +190,26 @@ final class SearchFilters
             }
         }
 
-        $context = is_array($entry['context'] ?? null) ? $entry['context'] : null;
+        return true;
+    }
 
+    /** Context property filters and the free-text context search. */
+    private function matchesContext(?array $context): bool
+    {
         foreach ($this->context as $contextFilter) {
             if (!$contextFilter->matches($context)) {
                 return false;
             }
         }
 
-        if ($this->contextSearch !== null && !ContextFilter::containsTerm($context, $this->contextSearch)) {
-            return false;
-        }
+        return $this->contextSearch === null || ContextFilter::containsTerm($context, $this->contextSearch);
+    }
 
-        if ($this->dateFrom !== null && !self::withinBound($entry, $this->dateFrom, before: false)) {
-            return false;
-        }
-
-        if ($this->dateTo !== null && !self::withinBound($entry, $this->dateTo, before: true)) {
-            return false;
-        }
-
-        return true;
+    /** Inclusive date_from / date_to bounds. */
+    private function matchesDates(array $entry): bool
+    {
+        return ($this->dateFrom === null || self::withinBound($entry, $this->dateFrom, before: false))
+            && ($this->dateTo === null || self::withinBound($entry, $this->dateTo, before: true));
     }
 
     // ──────────────────────────────────────────────────────────────────────────
