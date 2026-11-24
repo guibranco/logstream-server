@@ -187,6 +187,7 @@ services:
       UI_SECRET_PREFIX:  ${UI_SECRET_PREFIX-lsu_}
       APP_TOKEN_PREFIX:  ${APP_TOKEN_PREFIX-lss_}
       STORAGE_TYPE: ${STORAGE_TYPE:-mariadb}
+      LOG_STORE:    ${LOG_STORE:-}
       DB_HOST:      db
       DB_PORT:      3306
       DB_NAME:      ${DB_NAME:-logservice}
@@ -520,7 +521,8 @@ Add these to your `.env` file (or pass them directly to `docker compose`):
 | `API_SECRET_PREFIX` | — | Prefix for new API secrets from `bin/generate-secret.php` (default `lsa_`) |
 | `UI_SECRET_PREFIX` | — | Prefix for new UI secrets from `bin/generate-secret.php` (default `lsu_`) |
 | `APP_TOKEN_PREFIX` | — | Prefix for application tokens created or rotated via `/api/clients` (default `lss_`) |
-| `STORAGE_TYPE` | ✅ | `mariadb` or `file` |
+| `STORAGE_TYPE` | ✅ | Control plane (auth, clients, retention policies): `mariadb` or `file` |
+| `LOG_STORE` | ❌ | Where log entries are kept: `mariadb` or `file` (default: same as `STORAGE_TYPE`) |
 | `DB_PASS` | ✅ (mariadb) | MariaDB user password |
 | `DB_ROOT_PASS` | ✅ (mariadb) | MariaDB root password |
 | `DB_NAME` | ❌ | Database name (default: `logservice`) |

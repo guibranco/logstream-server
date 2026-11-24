@@ -13,7 +13,7 @@ use React\Http\Message\ServerRequest;
 
 final class InfoEndpointTest extends TestCase
 {
-    private function makeRouter(string $storageType = 'file'): Router
+    private function makeRouter(string $storageType = 'file', ?string $logStore = null): Router
     {
         $storage   = $this->createStub(\LogService\Storage\StorageInterface::class);
         $hub       = new LogHub('');
@@ -25,6 +25,7 @@ final class InfoEndpointTest extends TestCase
             writeAuth:   $writeAuth,
             uiSecret:    'test-ui-secret',
             storageType: $storageType,
+            logStore:    $logStore,
         );
     }
 
@@ -80,6 +81,27 @@ final class InfoEndpointTest extends TestCase
 
         $body = json_decode((string) $response->getBody(), true);
         self::assertSame('mariadb', $body['storage_type']);
+    }
+
+    #[Test]
+    public function log_store_defaults_to_the_storage_type(): void
+    {
+        $response = $this->makeRouter('mariadb')->handle(new ServerRequest('GET', 'http://localhost/api/info'));
+
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame('mariadb', $body['log_store']);
+    }
+
+    #[Test]
+    public function reports_a_log_store_that_differs_from_the_control_plane(): void
+    {
+        $response = $this->makeRouter('mariadb', 'file')->handle(new ServerRequest('GET', 'http://localhost/api/info'));
+
+        $body = json_decode((string) $response->getBody(), true);
+        self::assertSame('mariadb', $body['storage_type']);
+        self::assertSame('file', $body['log_store']);
+        // Clients live in the control plane, whatever holds the entries.
+        self::assertTrue($body['features']['client_management']);
     }
 
     #[Test]

@@ -787,7 +787,7 @@ components:
 
     InfoResponse:
       type: object
-      required: [version, storage_type, features]
+      required: [version, storage_type, log_store, features]
       description: Server version and feature availability.
       properties:
         version:
@@ -797,7 +797,16 @@ components:
         storage_type:
           type: string
           enum: [file, mariadb]
-          description: Active storage backend.
+          description: >
+            Control-plane backend (`STORAGE_TYPE`): write auth, clients,
+            retention policies and the retention log.
+          example: file
+        log_store:
+          type: string
+          enum: [file, mariadb]
+          description: >
+            Where log entries are written, searched and pruned (`LOG_STORE`).
+            Same as `storage_type` unless `LOG_STORE` is set.
           example: file
         features:
           type: object
@@ -1612,6 +1621,7 @@ paths:
                   value:
                     version: 1.0.4
                     storage_type: file
+                    log_store: file
                     features:
                       client_management: false
                       retention: true
@@ -1622,6 +1632,7 @@ paths:
                   value:
                     version: 1.0.4
                     storage_type: mariadb
+                    log_store: mariadb
                     features:
                       client_management: true
                       retention: true

@@ -25,6 +25,7 @@ use LogService\Retention\CachedRetentionVolumeAnalyzer;
 use LogService\Retention\RetentionRunner;
 use LogService\Retention\RetentionVolumeAnalyzerInterface;
 use LogService\Storage\ContextFilter;
+use LogService\Storage\SearchFilters;
 use LogService\Storage\StorageInterface;
 use LogService\Udp\UdpConfig;
 use LogService\Udp\UdpLogServer;
@@ -96,12 +97,17 @@ final class Router
         private readonly ?UdpConfig                          $udpConfig         = null,
         /** History of retention runs (retention_log table, or a JSONL file in file mode). */
         private readonly ?RetentionLogRepositoryInterface    $retentionLog      = null,
+        /** Where log entries live (LOG_STORE); defaults to $storageType, the control-plane database. */
+        ?string                                              $logStore          = null,
     ) {
+        $this->logStore = $logStore ?? $storageType;
         $this->sink = new EntrySink($storage, $hub, $ingestBuffer, $clientActivity);
     }
 
     /** Shared with UDP: sync writes, or the ingest buffer. */
     private readonly EntrySink $sink;
+
+    private readonly string $logStore;
 
     // ──────────────────────────────────────────────────────────────────────────
 
@@ -550,6 +556,7 @@ final class Router
         return $this->json([
             'version'      => $this->version,
             'storage_type' => $this->storageType,
+            'log_store'    => $this->logStore,
             'features'     => [
                 'client_management' => $this->storageType === 'mariadb',
                 'retention'         => $this->retentionRunner !== null,
@@ -874,7 +881,7 @@ final class Router
 
         $info = [
             'mode'      => IngestConfig::MODE_BUFFERED,
-            'db_driver' => $this->storageType === 'mariadb' ? $this->ingestDbDriver : null,
+            'db_driver' => $this->logStore === 'mariadb' ? $this->ingestDbDriver : null,
         ];
 
         return $withStats ? $info + $this->ingestBuffer->stats() : $info;
@@ -951,7 +958,13 @@ final class Router
         $limit  = max(1, min((int)($q['limit']  ?? 100), 1000));
         $offset = max(0,          (int)($q['offset'] ?? 0));
 
-        return $this->json($this->storage->search($filters, $limit, $offset), 200, $cors);
+        try {
+            $searchFilters = SearchFilters::fromArray($filters);
+        } catch (\InvalidArgumentException $e) {
+            return $this->json(['error' => $e->getMessage()], 400, $cors);
+        }
+
+        return $this->json($this->storage->search($searchFilters, $limit, $offset), 200, $cors);
     }
 
     private function handleGetById(string $id, array $cors): Response

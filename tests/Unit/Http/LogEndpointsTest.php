@@ -12,6 +12,7 @@ use LogService\Http\ClientIpResolver;
 use LogService\Http\Router;
 use LogService\Models\LogEntry;
 use LogService\Storage\ContextFilter;
+use LogService\Storage\SearchFilters;
 use LogService\Storage\StorageInterface;
 use LogService\WebSocket\LogHub;
 use PHPUnit\Framework\Attributes\Test;
@@ -517,7 +518,7 @@ final class LogEndpointsTest extends TestCase
         $storage->expects(self::once())
             ->method('search')
             ->with(
-                self::callback(fn(array $f) => $f['app_key'] === 'my-app' && $f['level'] === 'error'),
+                self::filtersWhere(fn(array $f) => $f['app_key'] === 'my-app' && $f['level'] === 'error'),
                 50,
                 10,
             )
@@ -537,7 +538,7 @@ final class LogEndpointsTest extends TestCase
         $storage = $this->createMock(StorageInterface::class);
         $storage->expects(self::once())
             ->method('search')
-            ->with(self::callback(function (array $f) use ($before) {
+            ->with(self::filtersWhere(function (array $f) use ($before) {
                 $from = new \DateTimeImmutable($f['date_from'], new \DateTimeZone('UTC'));
                 return !isset($f['date_to'])
                     && $from >= $before
@@ -584,7 +585,7 @@ final class LogEndpointsTest extends TestCase
         $storage->expects(self::once())
             ->method('search')
             ->with(
-                self::callback(fn(array $f) => $f['level'] === ['error', 'critical']
+                self::filtersWhere(fn(array $f) => $f['level'] === ['error', 'critical']
                     && $f['app_key'] === ['billing-api', 'orders-api']
                     && $f['app_id'] === 'web'),
                 100,
@@ -605,7 +606,7 @@ final class LogEndpointsTest extends TestCase
         $storage = $this->createMock(StorageInterface::class);
         $storage->expects(self::once())
             ->method('search')
-            ->with(self::callback(fn(array $f) => !array_key_exists('level', $f)), 100, 0)
+            ->with(self::filtersWhere(fn(array $f) => !array_key_exists('level', $f)), 100, 0)
             ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
 
         $query   = 'level[]=&level[]=%20';
@@ -621,7 +622,7 @@ final class LogEndpointsTest extends TestCase
         $storage = $this->createMock(StorageInterface::class);
         $storage->expects(self::once())
             ->method('search')
-            ->with(self::callback(fn(array $f) => ($f['message_template'] ?? null) === 'GitHub {event}'), 100, 0)
+            ->with(self::filtersWhere(fn(array $f) => ($f['message_template'] ?? null) === 'GitHub {event}'), 100, 0)
             ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
 
         $response = $this->makeRouter($storage)->handle(
@@ -637,7 +638,7 @@ final class LogEndpointsTest extends TestCase
         $storage = $this->createMock(StorageInterface::class);
         $storage->expects(self::once())
             ->method('search')
-            ->with(self::callback(fn(array $f) => ($f['sender_ip'] ?? null) === '203.0.113.7'), 100, 0)
+            ->with(self::filtersWhere(fn(array $f) => ($f['sender_ip'] ?? null) === '203.0.113.7'), 100, 0)
             ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
 
         $response = $this->makeRouter($storage)->handle($this->authed('GET', '/api/logs?sender_ip=203.0.113.7'));
@@ -651,7 +652,7 @@ final class LogEndpointsTest extends TestCase
         $storage = $this->createMock(StorageInterface::class);
         $storage->expects(self::once())
             ->method('search')
-            ->with(self::callback(fn(array $f) => ($f['transport'] ?? null) === 'udp'), 100, 0)
+            ->with(self::filtersWhere(fn(array $f) => ($f['transport'] ?? null) === 'udp'), 100, 0)
             ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
 
         $response = $this->makeRouter($storage)->handle($this->authed('GET', '/api/logs?transport=udp'));
@@ -665,7 +666,7 @@ final class LogEndpointsTest extends TestCase
         $storage = $this->createMock(StorageInterface::class);
         $storage->expects(self::once())
             ->method('search')
-            ->with(self::callback(function (array $f) {
+            ->with(self::filtersWhere(function (array $f) {
                 $ctx = $f['context'] ?? [];
                 return count($ctx) === 2
                     && $ctx[0] instanceof ContextFilter
@@ -687,7 +688,7 @@ final class LogEndpointsTest extends TestCase
         $storage = $this->createMock(StorageInterface::class);
         $storage->expects(self::once())
             ->method('search')
-            ->with(self::callback(fn(array $f) => ($f['context_search'] ?? null) === 'card_declined'), 100, 0)
+            ->with(self::filtersWhere(fn(array $f) => ($f['context_search'] ?? null) === 'card_declined'), 100, 0)
             ->willReturn(['total' => 0, 'limit' => 100, 'offset' => 0, 'entries' => []]);
 
         $response = $this->makeRouter($storage)->handle(
@@ -722,12 +723,24 @@ final class LogEndpointsTest extends TestCase
     }
 
     #[Test]
+    public function search_rejects_a_filter_given_as_a_list_where_only_one_value_is_allowed(): void
+    {
+        $storage = $this->createMock(StorageInterface::class);
+        $storage->expects(self::never())->method('search');
+
+        $response = $this->makeRouter($storage)->handle($this->authed('GET', '/api/logs?user_agent[]=curl'));
+
+        self::assertSame(400, $response->getStatusCode());
+        self::assertStringContainsString('user_agent', (string) $response->getBody());
+    }
+
+    #[Test]
     public function search_clamps_limit_to_the_1_to_1000_range(): void
     {
         $storage = $this->createMock(StorageInterface::class);
         $storage->expects(self::once())
             ->method('search')
-            ->with(self::isArray(), 1000, 0)
+            ->with(self::isInstanceOf(SearchFilters::class), 1000, 0)
             ->willReturn(['total' => 0, 'limit' => 1000, 'offset' => 0, 'entries' => []]);
 
         $response = $this->makeRouter($storage)->handle(
@@ -784,5 +797,13 @@ final class LogEndpointsTest extends TestCase
 
         self::assertSame(200, $response->getStatusCode());
         self::assertSame('01AAA', $body['id']);
+    }
+
+    /** Matches the SearchFilters passed to search() through their associative form. */
+    private static function filtersWhere(callable $predicate): \PHPUnit\Framework\Constraint\Callback
+    {
+        return self::callback(
+            static fn(mixed $filters): bool => $filters instanceof SearchFilters && $predicate($filters->toArray()),
+        );
     }
 }

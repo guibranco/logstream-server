@@ -8,6 +8,7 @@ use LogService\Database\Connection;
 use LogService\Models\LogEntry;
 use LogService\Storage\MariaDBStorage;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
+use LogService\Storage\SearchFilters;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -78,7 +79,7 @@ final class MariaDBStorageTest extends TestCase
     #[Test]
     public function it_counts_matches_of_a_list_across_pages(): void
     {
-        $result = $this->storage->search(['app_key' => ['billing-api', 'users-api']], 1, 1);
+        $result = $this->search(['app_key' => ['billing-api', 'users-api']], 1, 1);
 
         self::assertSame(3, $result['total']);
         self::assertCount(1, $result['entries']);
@@ -141,7 +142,7 @@ final class MariaDBStorageTest extends TestCase
     /** Sorted ids of the entries the filters return. */
     private function ids(array $filters): array
     {
-        $ids = array_column($this->storage->search($filters)['entries'], 'id');
+        $ids = array_column($this->search($filters)['entries'], 'id');
         sort($ids);
 
         return $ids;
@@ -168,5 +169,11 @@ final class MariaDBStorageTest extends TestCase
             'timestamp'  => '2026-03-01T10:00:00.000Z',
             'created_at' => '2026-03-01T10:00:00.000Z',
         ]);
+    }
+
+    /** search() with the filters in their associative form. */
+    private function search(array $filters, int $limit = 100, int $offset = 0): array
+    {
+        return $this->storage->search(SearchFilters::fromArray($filters), $limit, $offset);
     }
 }
