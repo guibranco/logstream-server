@@ -47,6 +47,7 @@ final class StorageFactory
     private ?Connection $controlDb = null;
     private ?Connection $logDb     = null;
     private ?WriteAuthInterface $writeAuth = null;
+    private readonly MariaDbSettings $db;
 
     /**
      * @param array<string, mixed> $env         Usually $_ENV after Dotenv.
@@ -57,6 +58,7 @@ final class StorageFactory
         private readonly array $env,
         private readonly string $projectRoot,
     ) {
+        $this->db = MariaDbSettings::fromEnv($env);
     }
 
     /** @param array<string, mixed> $env */
@@ -155,12 +157,7 @@ final class StorageFactory
             return "File ({$this->logPath()})";
         }
 
-        return sprintf(
-            'MariaDB (%s:%s/%s)',
-            $this->env['DB_HOST'] ?? '127.0.0.1',
-            $this->env['DB_PORT'] ?? '3306',
-            $this->env['DB_NAME'] ?? 'logservice',
-        );
+        return "MariaDB ({$this->db->label()})";
     }
 
     /**
@@ -171,11 +168,11 @@ final class StorageFactory
     {
         if ($this->logStoreIsDatabase() && $ingest->dbDriver === IngestConfig::DRIVER_ASYNC) {
             return AsyncMysqlBatchWriter::connect(
-                host:     (string) ($this->env['DB_HOST'] ?? '127.0.0.1'),
-                port:     (int) ($this->env['DB_PORT'] ?? 3306),
-                database: (string) ($this->env['DB_NAME'] ?? 'logservice'),
-                user:     (string) ($this->env['DB_USER'] ?? 'root'),
-                password: (string) ($this->env['DB_PASS'] ?? ''),
+                host:     $this->db->host,
+                port:     $this->db->port,
+                database: $this->db->database,
+                user:     $this->db->user,
+                password: $this->db->password,
             );
         }
 
@@ -230,32 +227,17 @@ final class StorageFactory
     /** Control-plane connection (session time zone left as configured on the server). */
     private function controlDb(): Connection
     {
-        [$user, $password] = $this->credentials();
-
-        return $this->controlDb ??= Connection::mysql($this->dsn(), $user, $password);
+        return $this->controlDb ??= Connection::mysql($this->db->dsn(), $this->db->user, $this->db->password);
     }
 
     /** Log-store connection: timestamps are stored and compared in UTC. */
     private function logDb(): Connection
     {
-        [$user, $password] = $this->credentials();
-
-        return $this->logDb ??= Connection::mysql($this->dsn(), $user, $password, ["SET time_zone = '+00:00'"]);
-    }
-
-    private function dsn(): string
-    {
-        return sprintf(
-            'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
-            $this->env['DB_HOST'] ?? '127.0.0.1',
-            $this->env['DB_PORT'] ?? '3306',
-            $this->env['DB_NAME'] ?? 'logservice',
+        return $this->logDb ??= Connection::mysql(
+            $this->db->dsn(),
+            $this->db->user,
+            $this->db->password,
+            ["SET time_zone = '+00:00'"],
         );
-    }
-
-    /** @return array{0: string, 1: string} */
-    private function credentials(): array
-    {
-        return [(string) ($this->env['DB_USER'] ?? 'root'), (string) ($this->env['DB_PASS'] ?? '')];
     }
 }
