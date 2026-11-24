@@ -1,0 +1,14 @@
+<!--
+  LogStream: per-query limits for the default settings profile (used by the
+  logstream user). Copy to /etc/clickhouse-server/users.d/ on the host. See docs/clickhouse.md.
+-->
+<clickhouse>
+    <profiles>
+        <default>
+            <!-- Two threads per query on a one-core host. -->
+            <max_threads>2</max_threads>
+            <!-- A single search can't take more than 1 GiB. -->
+            <max_memory_usage>1073741824</max_memory_usage>
+        </default>
+    </profiles>
+</clickhouse>

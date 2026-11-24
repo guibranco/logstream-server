@@ -96,7 +96,8 @@ same `DB_*` settings. `GET /api/info` reports both (`storage_type`, `log_store`)
 The server, `bin/retention.php` and `bin/prune.php` refuse to start on an
 unknown value (values are case-sensitive). `LOG_STORE=clickhouse` is reserved
 for the upcoming ClickHouse store ([#154](https://github.com/guibranco/logstream-server/issues/154))
-and is rejected until it ships.
+and is rejected until it ships. Its schema, migration runner and host
+configuration are already in place: see [docs/clickhouse.md](docs/clickhouse.md).
 
 ---
 

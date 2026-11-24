@@ -1,0 +1,45 @@
+<!--
+  LogStream: ClickHouse server limits for a small host shared with LogStream
+  (vinhedo5: 1 OCPU / 6 GB). Copy to /etc/clickhouse-server/config.d/ on the host;
+  docker-compose.yml and CI mount it as is. See docs/clickhouse.md.
+-->
+<clickhouse>
+    <!-- Hard cap for the whole server: 3 GiB, leaving room for LogStream, NGINX and the OS. -->
+    <max_server_memory_usage>3221225472</max_server_memory_usage>
+
+    <!-- Caches sized for a few GB of logs, not the multi-GB defaults. -->
+    <mark_cache_size>268435456</mark_cache_size>                <!-- 256 MiB -->
+    <index_mark_cache_size>67108864</index_mark_cache_size>     <!-- 64 MiB -->
+    <uncompressed_cache_size>134217728</uncompressed_cache_size> <!-- 128 MiB -->
+
+    <!-- One physical core: keep merges from starving LogStream's event loop. -->
+    <background_pool_size>2</background_pool_size>
+
+    <!--
+      With 2 threads the merge pool has 2 × background_merges_mutations_concurrency_ratio (2) = 4
+      slots. MergeTree refuses to load tables whose free-slot thresholds exceed that (defaults are
+      8, 20 and 25), so the server wouldn't start. Scale them down to the smaller pool.
+    -->
+    <merge_tree>
+        <number_of_free_entries_in_pool_to_lower_max_size_of_merge>2</number_of_free_entries_in_pool_to_lower_max_size_of_merge>
+        <number_of_free_entries_in_pool_to_execute_mutation>2</number_of_free_entries_in_pool_to_execute_mutation>
+        <number_of_free_entries_in_pool_to_execute_optimize_entire_partition>2</number_of_free_entries_in_pool_to_execute_optimize_entire_partition>
+    </merge_tree>
+    <max_concurrent_queries>20</max_concurrent_queries>
+
+    <logger>
+        <level>warning</level>
+    </logger>
+
+    <!-- System tables a single small instance doesn't need; they grow and use CPU. -->
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <trace_log remove="1"/>
+
+    <!-- Keep query history for a week only. -->
+    <query_log>
+        <database>system</database>
+        <table>query_log</table>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </query_log>
+</clickhouse>

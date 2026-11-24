@@ -132,6 +132,73 @@ jobs:
           TEST_DB_PASS: test
         run: vendor/bin/phpunit --testdox --testsuite integration --fail-on-skipped
 
+  # ── ClickHouse log store: migrations + schema on a real server ───────────────
+  clickhouse_migrations:
+    name: 🟡 ClickHouse Migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    env:
+      CLICKHOUSE_URL: http://127.0.0.1:8123
+      CLICKHOUSE_DATABASE: logstream
+      CLICKHOUSE_USER: logstream
+      CLICKHOUSE_PASSWORD: test
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Same image tag and config files as docker-compose.yml's clickhouse service,
+      # so the memory caps and settings are checked too.
+      - name: 🟡 Start ClickHouse
+        run: |
+          IMAGE=$(yq '.services.clickhouse.image' docker-compose.yml)
+          echo "Using $IMAGE"
+          docker run -d --name clickhouse -p 127.0.0.1:8123:8123 \
+            --ulimit nofile=262144:262144 \
+            -e CLICKHOUSE_DB="$CLICKHOUSE_DATABASE" \
+            -e CLICKHOUSE_USER="$CLICKHOUSE_USER" \
+            -e CLICKHOUSE_PASSWORD="$CLICKHOUSE_PASSWORD" \
+            -v "$PWD/docker/clickhouse/config.d/logstream.xml:/etc/clickhouse-server/config.d/logstream.xml:ro" \
+            -v "$PWD/docker/clickhouse/users.d/logstream.xml:/etc/clickhouse-server/users.d/logstream.xml:ro" \
+            "$IMAGE"
+          for _ in $(seq 1 60); do
+            if curl -sf "$CLICKHOUSE_URL/ping" > /dev/null; then exit 0; fi
+            if [[ "$(docker inspect -f '{{.State.Running}}' clickhouse)" != "true" ]]; then
+              echo "::error::ClickHouse exited during startup"
+              break
+            fi
+            sleep 2
+          done
+          exit 1
+
+      - name: 🧪 Dry run lists the pending files
+        run: bash Tools/clickhouse-migration.sh --dry-run | tee dry-run.txt && grep -q "001_log_entries.sql" dry-run.txt
+
+      - name: 🔄 Apply migrations
+        run: bash Tools/clickhouse-migration.sh
+
+      - name: 🔁 Re-running is a no-op
+        run: bash Tools/clickhouse-migration.sh | tee second-run.txt && grep -q "nothing to do" second-run.txt
+
+      - name: ✅ Check the schema
+        env:
+          EXPECT_MEMORY_CAP: "3221225472"
+        run: bash tests/clickhouse/schema-check.sh
+
+      - name: 📋 ClickHouse logs on failure
+        if: failure()
+        run: |
+          docker ps -a --filter name=clickhouse
+          docker logs clickhouse 2>&1 | tail -50
+          # The server logs to files inside the container; docker cp works even after it exits.
+          for f in clickhouse-server.err.log clickhouse-server.log; do
+            echo "──── $f"
+            docker cp "clickhouse:/var/log/clickhouse-server/$f" - 2>/dev/null | tar -xO | tail -60 || true
+          done
+
   # ── Integration: spin up Docker, run endpoint tests ──────────────────────────
   integration_tests:
     name: 🔌 Integration Tests
