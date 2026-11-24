@@ -5,15 +5,10 @@ declare(strict_types=1);
 
 require __DIR__ . '/../vendor/autoload.php';
 
-use LogService\Database\Connection;
 use Dotenv\Dotenv;
-use LogService\Retention\DatabaseRetentionEngine;
-use LogService\Retention\DatabaseRetentionLogRepository;
-use LogService\Retention\FileRetentionLogRepository;
-use LogService\Retention\DatabaseRetentionPolicyRepository;
-use LogService\Retention\FileRetentionEngine;
 use LogService\Retention\RetentionConfig;
 use LogService\Retention\RetentionRunner;
+use LogService\Storage\StorageFactory;
 
 // ─── Parse CLI arguments ───────────────────────────────────────────────────────
 
@@ -39,8 +34,14 @@ HELP;
 $dotenv = Dotenv::createImmutable(__DIR__ . '/..');
 $dotenv->safeLoad();
 
-$storageType = $_ENV['STORAGE_TYPE'] ?? 'file';
-$dryRun      = isset($opts['dry-run']);
+$dryRun = isset($opts['dry-run']);
+
+try {
+    $storageFactory = StorageFactory::fromEnv($_ENV, dirname(__DIR__));
+} catch (\InvalidArgumentException $e) {
+    fwrite(STDERR, "Error: " . $e->getMessage() . "\n");
+    exit(1);
+}
 
 // ─── Resolve config path ──────────────────────────────────────────────────────
 
@@ -64,40 +65,24 @@ try {
 
 // ─── Build engine and runner ──────────────────────────────────────────────────
 //
-// In MariaDB mode the policies live in the retention_policies table (the same
-// source the server and the UI use) and every run is recorded in retention_log.
-// In file mode the policies come from the JSON config file and runs are
-// recorded in retention_log.jsonl (RETENTION_LOG_PATH), next to the log directory.
+// The engine deletes from the log store (LOG_STORE). Policies and the run
+// history belong to the control plane (STORAGE_TYPE): in MariaDB mode the
+// policies live in the retention_policies table (the same source the server and
+// the UI use) and every run is recorded in retention_log; in file mode the
+// policies come from the JSON config file and runs are recorded in
+// retention_log.jsonl (RETENTION_LOG_PATH), next to the log directory.
 
-$repository = null;
-$log        = null;
-
-if ($storageType === 'mariadb') {
-    $dsn = sprintf(
-        'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
-        $_ENV['DB_HOST'] ?? '127.0.0.1',
-        $_ENV['DB_PORT'] ?? '3306',
-        $_ENV['DB_NAME'] ?? 'logservice',
-    );
-    $pdo = new PDO($dsn, $_ENV['DB_USER'] ?? 'root', $_ENV['DB_PASS'] ?? '', [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES   => false,
-    ]);
-    $pdo->exec("SET time_zone = '+00:00'");
-    $db         = Connection::wrap($pdo);
-    $engine     = new DatabaseRetentionEngine($db);
-    $repository = new DatabaseRetentionPolicyRepository($db);
-    $log        = new DatabaseRetentionLogRepository($db);
-} else {
-    $logPath = $_ENV['LOG_PATH'] ?? __DIR__ . '/../storage/logs';
-    $log     = new FileRetentionLogRepository(
-        $_ENV['RETENTION_LOG_PATH'] ?? dirname($logPath) . '/retention_log.jsonl',
-    );
-    $engine  = new FileRetentionEngine($logPath);
+try {
+    $storageFactory->connect();
+} catch (\Throwable $e) {
+    fwrite(STDERR, "Error connecting to the database: " . $e->getMessage() . "\n");
+    exit(1);
 }
 
-$runner = new RetentionRunner($engine, $config, $repository, $log);
+$engine     = $storageFactory->retentionEngine();
+$repository = $storageFactory->controlPlaneIsDatabase() ? $storageFactory->policyRepository($configPath) : null;
+$log        = $storageFactory->retentionLog();
+$runner     = new RetentionRunner($engine, $config, $repository, $log);
 
 // ─── List mode ────────────────────────────────────────────────────────────────
 

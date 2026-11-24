@@ -104,9 +104,9 @@ final class MariaDBStorage implements StorageInterface
 
     // ──────────────────────────────────────────────────────────────────────────
 
-    public function search(array $filters, int $limit = 100, int $offset = 0): array
+    public function search(SearchFilters $filters, int $limit = 100, int $offset = 0): array
     {
-        [$where, $params] = $this->buildWhere($filters);
+        [$where, $params] = self::buildWhere($filters);
         $whereClause = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
         // Data query
@@ -157,18 +157,20 @@ final class MariaDBStorage implements StorageInterface
      * `col = :p` for one value, `col IN (:p_0, :p_1, …)` for a list
      * (level[]=error&level[]=critical matches any of its values).
      *
-     * @param string|list<string>  $value
+     * @param list<string>         $values
      * @param array<string, mixed> $params Receives the bound values.
      */
-    private function exactCondition(string $col, string $placeholder, string|array $value, array &$params): string
+    private static function exactCondition(string $col, array $values, array &$params): string
     {
-        if (!is_array($value)) {
-            $params[$placeholder] = $value;
+        $placeholder = ':' . $col;
+
+        if (count($values) === 1) {
+            $params[$placeholder] = $values[0];
             return "{$col} = {$placeholder}";
         }
 
         $placeholders = [];
-        foreach (array_values($value) as $i => $item) {
+        foreach ($values as $i => $item) {
             $name           = "{$placeholder}_{$i}";
             $placeholders[] = $name;
             $params[$name]  = $item;
@@ -176,45 +178,30 @@ final class MariaDBStorage implements StorageInterface
         return "{$col} IN (" . implode(', ', $placeholders) . ')';
     }
 
-    private function buildWhere(array $filters): array
+    /**
+     * Compile the filters into WHERE conditions and named parameters.
+     * Column names come from SearchFilters' fixed field maps, never from input.
+     *
+     * @return array{0: list<string>, 1: array<string, mixed>}
+     */
+    public static function buildWhere(SearchFilters $filters): array
     {
         $where  = [];
         $params = [];
 
-        $exact = [
-            'app_key'  => ':app_key',
-            'app_id'   => ':app_id',
-            'level'    => ':level',
-            'trace_id' => ':trace_id',
-            'batch_id' => ':batch_id',
-            'sender_ip' => ':sender_ip',
-            'transport' => ':transport',
-            'message_template' => ':message_template',
-        ];
-
-        foreach ($exact as $col => $placeholder) {
-            if (!empty($filters[$col])) {
-                $where[] = $this->exactCondition($col, $placeholder, $filters[$col], $params);
-            }
+        foreach ($filters->exact as $col => $values) {
+            $where[] = self::exactCondition($col, $values, $params);
         }
 
-        // LIKE filters
-        if (!empty($filters['user_agent'])) {
-            $where[]             = 'user_agent LIKE :user_agent';
-            $params[':user_agent'] = '%' . $filters['user_agent'] . '%';
-        }
-        if (!empty($filters['category'])) {
-            $where[]            = 'category LIKE :category';
-            $params[':category'] = '%' . $filters['category'] . '%';
-        }
-        if (!empty($filters['search'])) {
-            $where[]          = 'message LIKE :search';
-            $params[':search'] = '%' . $filters['search'] . '%';
+        // LIKE filters (user_agent, category, message)
+        foreach ($filters->substring as $col => $term) {
+            $where[]             = "{$col} LIKE :{$col}";
+            $params[":{$col}"]   = '%' . $term . '%';
         }
 
         // Context properties: compare the unquoted JSON value as a string.
         // The JSON path is bound as a parameter; ContextFilter quotes every segment.
-        foreach ($filters['context'] ?? [] as $i => $contextFilter) {
+        foreach ($filters->context as $i => $contextFilter) {
             $path      = ":ctx_path_{$i}";
             $value     = ":ctx_value_{$i}";
             $extracted = "JSON_UNQUOTE(JSON_EXTRACT(context, {$path}))";
@@ -227,19 +214,19 @@ final class MariaDBStorage implements StorageInterface
         }
 
         // Free text across the whole context document (ft_context, migration 006).
-        if (!empty($filters['context_search'])) {
+        if ($filters->contextSearch !== null) {
             $where[]                   = 'MATCH(context) AGAINST(:context_search IN BOOLEAN MODE)';
-            $params[':context_search'] = ContextFilter::fulltextPhrase($filters['context_search']);
+            $params[':context_search'] = ContextFilter::fulltextPhrase($filters->contextSearch);
         }
 
         // Date range
-        if (!empty($filters['date_from'])) {
-            $where[]             = 'timestamp >= :date_from';
-            $params[':date_from'] = $filters['date_from'];
+        if ($filters->dateFrom !== null) {
+            $where[]              = 'timestamp >= :date_from';
+            $params[':date_from'] = $filters->dateFrom;
         }
-        if (!empty($filters['date_to'])) {
-            $where[]           = 'timestamp <= :date_to';
-            $params[':date_to'] = $filters['date_to'];
+        if ($filters->dateTo !== null) {
+            $where[]            = 'timestamp <= :date_to';
+            $params[':date_to'] = $filters->dateTo;
         }
 
         return [$where, $params];

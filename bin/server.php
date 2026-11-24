@@ -12,10 +12,6 @@ $logger = new LogService\Logging\ServerLogger(projectRoot: dirname(__DIR__));
 $logger->registerPhpHandlers();
 
 use Dotenv\Dotenv;
-use LogService\Auth\DatabaseWriteAuth;
-use LogService\Auth\SecretGenerator;
-use LogService\Auth\SingleKeyWriteAuth;
-use LogService\Database\Connection;
 use LogService\Health\ClientActivityTracker;
 use LogService\Health\ClientSilenceMonitor;
 use LogService\Health\WebhookSilenceNotifier;
@@ -26,23 +22,12 @@ use LogService\Ingest\AsyncMysqlBatchWriter;
 use LogService\Ingest\EntrySink;
 use LogService\Ingest\IngestBuffer;
 use LogService\Ingest\IngestConfig;
-use LogService\Ingest\StorageBatchWriter;
 use LogService\Logging\SelfLogConfig;
 use LogService\Logging\SelfLogSink;
-use LogService\Repository\ClientRepository;
 use LogService\Retention\CachedRetentionVolumeAnalyzer;
-use LogService\Retention\DatabaseRetentionEngine;
-use LogService\Retention\DatabaseRetentionLogRepository;
-use LogService\Retention\FileRetentionLogRepository;
-use LogService\Retention\DatabaseRetentionPolicyRepository;
-use LogService\Retention\DatabaseRetentionVolumeAnalyzer;
-use LogService\Retention\FileRetentionEngine;
-use LogService\Retention\FileRetentionPolicyRepository;
-use LogService\Retention\FileRetentionVolumeAnalyzer;
 use LogService\Retention\RetentionConfig;
 use LogService\Retention\RetentionRunner;
-use LogService\Storage\FileStorage;
-use LogService\Storage\MariaDBStorage;
+use LogService\Storage\StorageFactory;
 use LogService\Udp\UdpConfig;
 use LogService\Udp\UdpLogServer;
 use LogService\Udp\UdpPacketValidator;
@@ -63,7 +48,6 @@ use React\Socket\SocketServer;
 $dotenv = Dotenv::createImmutable(__DIR__ . '/..');
 $dotenv->safeLoad();
 
-$storageType = $_ENV['STORAGE_TYPE'] ?? 'file';
 $httpPort    = (int)($_ENV['HTTP_PORT'] ?? 8081);
 $wsPort      = (int)($_ENV['WS_PORT']   ?? 8080);
 $apiSecret   = $_ENV['API_SECRET']   ?? '';
@@ -74,9 +58,10 @@ $ipResolver  = ClientIpResolver::fromString($_ENV['TRUSTED_PROXIES'] ?? '');
 $demoMode    = in_array(strtolower(trim((string) ($_ENV['DEMO_MODE'] ?? ''))), ['1', 'true', 'yes', 'on'], true);
 
 try {
-    $ingestConfig  = IngestConfig::fromEnv($_ENV);
-    $selfLogConfig = SelfLogConfig::fromEnv($_ENV);
-    $udpConfig     = UdpConfig::fromEnv($_ENV);
+    $storageFactory = StorageFactory::fromEnv($_ENV, dirname(__DIR__));
+    $ingestConfig   = IngestConfig::fromEnv($_ENV);
+    $selfLogConfig  = SelfLogConfig::fromEnv($_ENV);
+    $udpConfig      = UdpConfig::fromEnv($_ENV);
     $udpConfig->assertNoPortClash($httpPort, $wsPort);
 } catch (\InvalidArgumentException $e) {
     $logger->critical('config', $e->getMessage());
@@ -85,52 +70,41 @@ try {
 
 $logger->configure($selfLogConfig, $appVersion);
 
+$storageConfig = $storageFactory->config;
+$storageType   = $storageConfig->controlPlane;
+$logStore      = $storageConfig->logStore;
+
 // ─── Storage + Write Auth ─────────────────────────────────────────────────────
+// Control plane (STORAGE_TYPE): write auth, clients, retention policies and log.
+// Log store (LOG_STORE, defaults to STORAGE_TYPE): where entries are kept.
 
-$writeAuthDb      = null;
-$clientRepository = null;
-$clientActivity   = null;
+$clientActivity = null;
 
-if ($storageType === 'mariadb') {
-    $dsn  = sprintf(
-        'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
-        $_ENV['DB_HOST'] ?? '127.0.0.1',
-        $_ENV['DB_PORT'] ?? '3306',
-        $_ENV['DB_NAME'] ?? 'logservice',
-    );
-    $dbUser = $_ENV['DB_USER'] ?? 'root';
-    $dbPass = $_ENV['DB_PASS'] ?? '';
+try {
+    // MariaDB connections re-open themselves if the server drops them while idle
+    // (wait_timeout, VPN/NAT idle timeouts); connect() fails fast on bad credentials.
+    $storageFactory->connect();
+    $clientRepository = $storageFactory->clientRepository();
+} catch (\InvalidArgumentException $e) {
+    $logger->critical('config', 'APP_TOKEN_PREFIX: ' . $e->getMessage());
+    exit(1);
+}
 
-    // Both connections re-open themselves if MariaDB drops them while idle
-    // (wait_timeout, VPN/NAT idle timeouts), instead of failing with
-    // "MySQL server has gone away" until the server restarts.
-    $appDb      = Connection::mysql($dsn, $dbUser, $dbPass);
-    $storageDb  = Connection::mysql($dsn, $dbUser, $dbPass, ["SET time_zone = '+00:00'"]);
-    $storageDb->pdo(); // fail fast on bad credentials at boot
+$storage     = $storageFactory->logStorage();
+$writeAuth   = $storageFactory->writeAuth();
+$writeAuthDb = $storageFactory->databaseWriteAuth();
+$authMode    = $storageFactory->authModeLabel();
 
-    $storage          = new MariaDBStorage($storageDb);
-    $writeAuthDb      = new DatabaseWriteAuth($appDb);
-    $writeAuth        = $writeAuthDb;
-    try {
-        $appTokens = SecretGenerator::forAppTokens($_ENV);
-    } catch (\InvalidArgumentException $e) {
-        $logger->critical('config', 'APP_TOKEN_PREFIX: ' . $e->getMessage());
-        exit(1);
-    }
-    $clientRepository = new ClientRepository($appDb, $appTokens);
+if ($clientRepository !== null) {
     // last_seen_at: kept in memory on ingestion, written every few seconds.
-    $clientActivity   = new ClientActivityTracker($clientRepository, log: $logger->channel('clients'));
+    $clientActivity = new ClientActivityTracker($clientRepository, log: $logger->channel('clients'));
+}
 
-    $authMode = 'per-client (X-Api-Key / X-Api-Token  →  clients table)';
-    $logger->info('storage', "MariaDB ({$_ENV['DB_HOST']}:{$_ENV['DB_PORT']}/{$_ENV['DB_NAME']})");
+$logger->info('storage', $storageConfig->isUnified()
+    ? $storageFactory->logStoreLabel()
+    : "Log store: {$storageFactory->logStoreLabel()} — control plane: {$storageType}");
+if ($clientRepository !== null) {
     $logger->info('clients', 'Client management enabled');
-} else {
-    $logPath   = $_ENV['LOG_PATH'] ?? __DIR__ . '/../storage/logs';
-    $storage   = new FileStorage($logPath);
-    $writeAuth = new SingleKeyWriteAuth($apiSecret);
-
-    $authMode = 'single key (Authorization: Bearer API_SECRET)';
-    $logger->info('storage', "File ({$logPath})");
 }
 
 if (empty($uiSecret)) {
@@ -158,23 +132,10 @@ if ($retentionConfigPath !== null) {
 }
 
 if ($retentionConfig->isEnabled()) {
-    if ($storageType === 'mariadb') {
-        $retentionEngine  = new DatabaseRetentionEngine($appDb);
-        $policyRepository = new DatabaseRetentionPolicyRepository($appDb);
-        $retentionLog     = new DatabaseRetentionLogRepository($appDb);
-        $volumeAnalyzer   = new CachedRetentionVolumeAnalyzer(new DatabaseRetentionVolumeAnalyzer($appDb));
-    } else {
-        $retentionEngine  = new FileRetentionEngine($logPath ?? (__DIR__ . '/../storage/logs'));
-        $policyRepository = new FileRetentionPolicyRepository(
-            $retentionConfigPath ?? (__DIR__ . '/../retention.json'),
-        );
-        $volumeAnalyzer   = new CachedRetentionVolumeAnalyzer(
-            new FileRetentionVolumeAnalyzer($logPath ?? (__DIR__ . '/../storage/logs')),
-        );
-        $retentionLog     = new FileRetentionLogRepository(
-            $_ENV['RETENTION_LOG_PATH'] ?? dirname($logPath ?? (__DIR__ . '/../storage/logs')) . '/retention_log.jsonl',
-        );
-    }
+    $retentionEngine  = $storageFactory->retentionEngine();
+    $policyRepository = $storageFactory->policyRepository($retentionConfigPath ?? (__DIR__ . '/../retention.json'));
+    $retentionLog     = $storageFactory->retentionLog();
+    $volumeAnalyzer   = new CachedRetentionVolumeAnalyzer($storageFactory->volumeAnalyzer());
 
     $retentionRunner = new RetentionRunner($retentionEngine, $retentionConfig, $policyRepository, $retentionLog);
 
@@ -204,18 +165,8 @@ $ingestBuffer = null;
 $asyncWriter  = null;
 
 if ($ingestConfig->isBuffered()) {
-    if ($storageType === 'mariadb' && $ingestConfig->dbDriver === IngestConfig::DRIVER_ASYNC) {
-        $asyncWriter = AsyncMysqlBatchWriter::connect(
-            host:     $_ENV['DB_HOST'] ?? '127.0.0.1',
-            port:     (int) ($_ENV['DB_PORT'] ?? 3306),
-            database: $_ENV['DB_NAME'] ?? 'logservice',
-            user:     $_ENV['DB_USER'] ?? 'root',
-            password: $_ENV['DB_PASS'] ?? '',
-        );
-        $batchWriter = $asyncWriter;
-    } else {
-        $batchWriter = new StorageBatchWriter($storage, $storageType === 'mariadb' ? 'pdo-mysql' : 'file');
-    }
+    $batchWriter = $storageFactory->batchWriter($ingestConfig, $storage);
+    $asyncWriter = $batchWriter instanceof AsyncMysqlBatchWriter ? $batchWriter : null;
 
     $ingestBuffer = IngestBuffer::fromConfig(
         $batchWriter,
@@ -310,6 +261,7 @@ $router = new Router(
     writeAuth:        $writeAuth,
     uiSecret:         $uiSecret,
     storageType:      $storageType,
+    logStore:         $logStore,
     version:          $appVersion,
     retentionRunner:  $retentionRunner,
     policyRepository: $policyRepository,
@@ -367,6 +319,7 @@ echo $udpConfig->enabled
     : "║  UDP       →  off\n";
 echo "╠══════════════════════════════════════════╣\n";
 echo "║  Write auth : {$authMode}\n";
+echo "║  Log store  : {$logStore}\n";
 echo "║  Read key   : " . (empty($uiSecret) ? '⚠️  NOT SET' : '✅ set') . "\n";
 echo "╚══════════════════════════════════════════╝\n\n";
 
@@ -378,6 +331,7 @@ $logger->info('startup', "LogStream server {$appVersion} started", [
     'udp_enabled'  => $udpConfig->enabled,
     'udp_port'     => $udpConfig->enabled ? $udpConfig->port : null,
     'storage_type' => $storageType,
+    'log_store'    => $logStore,
     'write_auth'   => $authMode,
     'read_key_set' => !empty($uiSecret),
     'ingest_mode'  => $ingestConfig->mode,

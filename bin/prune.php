@@ -5,15 +5,10 @@ declare(strict_types=1);
 
 require __DIR__ . '/../vendor/autoload.php';
 
-use LogService\Database\Connection;
 use Dotenv\Dotenv;
-use LogService\Retention\DatabasePruner;
-use LogService\Retention\DatabaseRetentionLogRepository;
-use LogService\Retention\FileRetentionLogRepository;
-use LogService\Retention\DatabaseRetentionPolicyRepository;
-use LogService\Retention\FileStoragePruner;
 use LogService\Retention\RetentionConfig;
 use LogService\Retention\RetentionEngine;
+use LogService\Storage\StorageFactory;
 
 // ─── Arguments ────────────────────────────────────────────────────────────────
 //
@@ -58,45 +53,34 @@ if (!$config->enabled) {
 }
 
 // ─── Build pruner ─────────────────────────────────────────────────────────────
+//
+// The pruner deletes from the log store (LOG_STORE); the policies and the run
+// history come from the control plane (STORAGE_TYPE).
 
-$storageType = $_ENV['STORAGE_TYPE'] ?? 'file';
-$log         = null;
+try {
+    $storageFactory = StorageFactory::fromEnv($_ENV, dirname(__DIR__));
+    $storageFactory->connect();
+} catch (\Throwable $e) {
+    fwrite(STDERR, "[Retention] " . $e->getMessage() . "\n");
+    exit(1);
+}
 
-if ($storageType === 'mariadb') {
-    $dsn = sprintf(
-        'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
-        $_ENV['DB_HOST'] ?? '127.0.0.1',
-        $_ENV['DB_PORT'] ?? '3306',
-        $_ENV['DB_NAME'] ?? 'logservice',
-    );
-    $pdo = new PDO($dsn, $_ENV['DB_USER'] ?? 'root', $_ENV['DB_PASS'] ?? '', [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES   => false,
-    ]);
-    $pdo->exec("SET time_zone = '+00:00'");
-    $db     = Connection::wrap($pdo);
-    $pruner = new DatabasePruner($db);
-    $log    = new DatabaseRetentionLogRepository($db);
+$pruner = $storageFactory->pruner();
+$log    = $storageFactory->retentionLog();
 
+if ($storageFactory->controlPlaneIsDatabase()) {
     // The policies live in the retention_policies table (managed from the UI
     // and the API), not in the JSON file, which only provides enabled/interval.
     try {
         $config = new RetentionConfig(
             enabled:       $config->enabled,
             intervalHours: $config->intervalHours,
-            policies:      (new DatabaseRetentionPolicyRepository($db))->all(),
+            policies:      $storageFactory->policyRepository($configPath)->all(),
         );
     } catch (\Throwable $e) {
         fwrite(STDERR, "[Retention] Could not load policies: " . $e->getMessage() . "\n");
         exit(1);
     }
-} else {
-    $logPath = $_ENV['LOG_PATH'] ?? dirname(__DIR__) . '/storage/logs';
-    $log     = new FileRetentionLogRepository(
-        $_ENV['RETENTION_LOG_PATH'] ?? dirname($logPath) . '/retention_log.jsonl',
-    );
-    $pruner  = new FileStoragePruner($logPath);
 }
 
 // ─── Run ──────────────────────────────────────────────────────────────────────

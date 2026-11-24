@@ -7,6 +7,7 @@ namespace LogService\Tests\Unit\Storage;
 use LogService\Models\LogEntry;
 use LogService\Storage\ContextFilter;
 use LogService\Storage\FileStorage;
+use LogService\Storage\SearchFilters;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
@@ -154,7 +155,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01B', timestamp: $ts));
         $this->storage->save($this->makeEntry('01C', timestamp: $ts));
 
-        $result = $this->storage->search([]);
+        $result = $this->search([]);
 
         self::assertSame(3, $result['total']);
         self::assertCount(3, $result['entries']);
@@ -168,7 +169,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01B', appKey: 'api-two', timestamp: $ts));
         $this->storage->save($this->makeEntry('01C', appKey: 'api-one', timestamp: $ts));
 
-        $result = $this->storage->search(['app_key' => 'api-one']);
+        $result = $this->search(['app_key' => 'api-one']);
 
         self::assertSame(2, $result['total']);
         foreach ($result['entries'] as $e) {
@@ -185,7 +186,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01C', level: 'error',   timestamp: $ts));
         $this->storage->save($this->makeEntry('01D', level: 'warning', timestamp: $ts));
 
-        $result = $this->storage->search(['level' => 'error']);
+        $result = $this->search(['level' => 'error']);
 
         self::assertSame(2, $result['total']);
     }
@@ -199,7 +200,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01C', level: 'critical', timestamp: $ts));
         $this->storage->save($this->makeEntry('01D', level: 'warning',  timestamp: $ts));
 
-        $result = $this->storage->search(['level' => ['error', 'critical']]);
+        $result = $this->search(['level' => ['error', 'critical']]);
 
         $ids = array_column($result['entries'], 'id');
         sort($ids);
@@ -214,7 +215,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01A', traceId: 'trace-aaa', timestamp: $ts));
         $this->storage->save($this->makeEntry('01B', traceId: 'trace-bbb', timestamp: $ts));
 
-        $result = $this->storage->search(['trace_id' => 'trace-aaa']);
+        $result = $this->search(['trace_id' => 'trace-aaa']);
 
         self::assertSame(1, $result['total']);
         self::assertSame('trace-aaa', $result['entries'][0]['trace_id']);
@@ -228,7 +229,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01B', batchId: 'batch-x', timestamp: $ts));
         $this->storage->save($this->makeEntry('01C', batchId: 'batch-y', timestamp: $ts));
 
-        $result = $this->storage->search(['batch_id' => 'batch-x']);
+        $result = $this->search(['batch_id' => 'batch-x']);
 
         self::assertSame(2, $result['total']);
     }
@@ -244,7 +245,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01A', category: 'payments.charge', timestamp: $ts));
         $this->storage->save($this->makeEntry('01B', category: 'auth.login',      timestamp: $ts));
 
-        $result = $this->storage->search(['category' => 'payments']);
+        $result = $this->search(['category' => 'payments']);
 
         self::assertSame(1, $result['total']);
     }
@@ -257,7 +258,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01B', message: 'Charge failed',    timestamp: $ts));
         $this->storage->save($this->makeEntry('01C', message: 'User logged out',  timestamp: $ts));
 
-        $result = $this->storage->search(['search' => 'User logged']);
+        $result = $this->search(['search' => 'User logged']);
 
         self::assertSame(2, $result['total']);
     }
@@ -270,7 +271,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01B', message: 'GitHub ping', timestamp: $ts, template: 'GitHub {event}'));
         $this->storage->save($this->makeEntry('01C', message: 'GitHub {event}', timestamp: $ts));
 
-        $result = $this->storage->search(['message_template' => 'GitHub {event}']);
+        $result = $this->search(['message_template' => 'GitHub {event}']);
 
         self::assertSame(2, $result['total']);
         self::assertSame('GitHub {event}', $result['entries'][0]['message_template']);
@@ -288,7 +289,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01B', context: ['order' => ['id' => 7]]));
         $this->storage->save($this->makeEntry('01C'));
 
-        $result = $this->storage->search([
+        $result = $this->search([
             'context' => ContextFilter::fromQuery(['order.id' => '42'], null),
         ]);
 
@@ -303,7 +304,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01B', context: ['role' => 'human']));
         $this->storage->save($this->makeEntry('01C'));
 
-        $result = $this->storage->search([
+        $result = $this->search([
             'context' => ContextFilter::fromQuery(null, ['role' => 'bot']),
         ]);
 
@@ -322,7 +323,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01B', timestamp: '2024-06-01T00:00:00.000Z'));
         $this->storage->save($this->makeEntry('01C', timestamp: '2024-12-01T00:00:00.000Z'));
 
-        $result = $this->storage->search(['date_from' => '2024-06-01T00:00:00.000Z']);
+        $result = $this->search(['date_from' => '2024-06-01T00:00:00.000Z']);
 
         self::assertSame(2, $result['total']);
     }
@@ -336,7 +337,7 @@ final class FileStorageTest extends TestCase
         $previous = date_default_timezone_get();
         date_default_timezone_set('America/Sao_Paulo');
         try {
-            $result = $this->storage->search(['date_from' => '2024-06-01 10:00:00.000']);
+            $result = $this->search(['date_from' => '2024-06-01 10:00:00.000']);
         } finally {
             date_default_timezone_set($previous);
         }
@@ -351,7 +352,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01B', timestamp: '2024-06-01T00:00:00.000Z'));
         $this->storage->save($this->makeEntry('01C', timestamp: '2024-12-01T00:00:00.000Z'));
 
-        $result = $this->storage->search(['date_to' => '2024-06-01T23:59:59.000Z']);
+        $result = $this->search(['date_to' => '2024-06-01T23:59:59.000Z']);
 
         self::assertSame(2, $result['total']);
     }
@@ -361,7 +362,7 @@ final class FileStorageTest extends TestCase
     {
         $this->writeRawLine('2024/01/01', ['id' => '01A', 'timestamp' => 'not-a-real-date']);
 
-        $result = $this->storage->search([
+        $result = $this->search([
             'date_from' => '2023-12-31T00:00:00.000Z',
             'date_to'   => '2024-01-02T00:00:00.000Z',
         ]);
@@ -374,7 +375,7 @@ final class FileStorageTest extends TestCase
     {
         $this->writeRawLine('2024/01/01', ['id' => '01A', 'timestamp' => 'not-a-real-date']);
 
-        $result = $this->storage->search(['date_to' => '2024-01-02T00:00:00.000Z']);
+        $result = $this->search(['date_to' => '2024-01-02T00:00:00.000Z']);
 
         self::assertSame(0, $result['total']);
     }
@@ -391,8 +392,8 @@ final class FileStorageTest extends TestCase
             $this->storage->save($this->makeEntry(sprintf('%03d', $i), timestamp: $ts));
         }
 
-        $page1 = $this->storage->search([], 3, 0);
-        $page2 = $this->storage->search([], 3, 3);
+        $page1 = $this->search([], 3, 0);
+        $page2 = $this->search([], 3, 3);
 
         self::assertSame(10, $page1['total']);
         self::assertCount(3, $page1['entries']);
@@ -411,7 +412,7 @@ final class FileStorageTest extends TestCase
         $this->storage->save($this->makeEntry('01B', timestamp: '2024-03-01T00:00:00.000Z'));
         $this->storage->save($this->makeEntry('01C', timestamp: '2024-06-01T00:00:00.000Z'));
 
-        $result = $this->storage->search([]);
+        $result = $this->search([]);
 
         $timestamps = array_column($result['entries'], 'timestamp');
 
@@ -474,5 +475,11 @@ final class FileStorageTest extends TestCase
             is_dir($path) ? $this->rmdirRecursive($path) : unlink($path);
         }
         rmdir($dir);
+    }
+
+    /** search() with the filters in their associative form. */
+    private function search(array $filters, int $limit = 100, int $offset = 0): array
+    {
+        return $this->storage->search(SearchFilters::fromArray($filters), $limit, $offset);
     }
 }

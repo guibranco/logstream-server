@@ -59,33 +59,9 @@ final class FileStorage implements StorageInterface
 
     // ──────────────────────────────────────────────────────────────────────────
 
-    public function search(array $filters, int $limit = 100, int $offset = 0): array
+    public function search(SearchFilters $filters, int $limit = 100, int $offset = 0): array
     {
-        $files = $this->resolveFiles($filters);
-
-        $matched = [];
-
-        foreach ($files as $file) {
-            if (!file_exists($file)) {
-                continue;
-            }
-
-            $handle = fopen($file, 'r');
-            if (!$handle) {
-                continue;
-            }
-
-            while (($line = fgets($handle)) !== false) {
-                $entry = json_decode(trim($line), true);
-                if (!$entry) {
-                    continue;
-                }
-                if ($this->matchesFilters($entry, $filters)) {
-                    $matched[] = $entry;
-                }
-            }
-            fclose($handle);
-        }
+        $matched = $this->scan($this->resolveFiles($filters), $filters->matches(...));
 
         // Sort newest-first
         usort($matched, fn($a, $b) => strcmp($b['timestamp'], $a['timestamp']));
@@ -105,12 +81,18 @@ final class FileStorage implements StorageInterface
 
     public function findById(string $id): ?LogEntry
     {
-        // Scan all files for this ID or trace_id
-        $result = $this->search(['_id_or_trace' => $id], 1, 0);
-        if (!empty($result['entries'])) {
-            return LogEntry::fromArray($result['entries'][0]);
+        // Scan all files for this ID or trace_id; keep the newest match.
+        $matched = $this->scan(
+            $this->allFiles(),
+            static fn(array $entry): bool => ($entry['id'] ?? null) === $id || ($entry['trace_id'] ?? null) === $id,
+        );
+        if ($matched === []) {
+            return null;
         }
-        return null;
+
+        usort($matched, fn($a, $b) => strcmp($b['timestamp'], $a['timestamp']));
+
+        return LogEntry::fromArray($matched[0]);
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -132,14 +114,14 @@ final class FileStorage implements StorageInterface
      * Determine which daily files to scan.
      * Falls back to scanning everything if no date constraints are given.
      */
-    private function resolveFiles(array $filters): array
+    private function resolveFiles(SearchFilters $filters): array
     {
-        $from = isset($filters['date_from'])
-            ? new \DateTimeImmutable($filters['date_from'], new \DateTimeZone('UTC'))
+        $from = $filters->dateFrom !== null
+            ? new \DateTimeImmutable($filters->dateFrom, new \DateTimeZone('UTC'))
             : null;
 
-        $to = isset($filters['date_to'])
-            ? new \DateTimeImmutable($filters['date_to'], new \DateTimeZone('UTC'))
+        $to = $filters->dateTo !== null
+            ? new \DateTimeImmutable($filters->dateTo, new \DateTimeZone('UTC'))
             : null;
 
         if ($from === null && $to === null) {
@@ -182,78 +164,39 @@ final class FileStorage implements StorageInterface
         return $files;
     }
 
-    private function matchesFilters(array $entry, array $filters): bool
+    /**
+     * Decoded entries of the given day files that satisfy $match.
+     *
+     * @param list<string>              $files
+     * @param callable(array): bool     $match
+     * @return list<array<string, mixed>>
+     */
+    private function scan(array $files, callable $match): array
     {
-        // Internal: find by ID or trace_id
-        if (isset($filters['_id_or_trace'])) {
-            return $entry['id'] === $filters['_id_or_trace']
-                || $entry['trace_id'] === $filters['_id_or_trace'];
-        }
+        $matched = [];
 
-        $exact = ['app_key', 'app_id', 'level', 'trace_id', 'batch_id', 'sender_ip', 'transport', 'message_template'];
-        foreach ($exact as $field) {
-            if (empty($filters[$field])) {
+        foreach ($files as $file) {
+            if (!file_exists($file)) {
                 continue;
             }
-            // A list (app_key[]=a&app_key[]=b) matches any of its values.
-            $wanted = is_array($filters[$field]) ? $filters[$field] : [$filters[$field]];
-            if (!in_array($entry[$field] ?? '', $wanted, true)) {
-                return false;
+
+            $handle = fopen($file, 'r');
+            if (!$handle) {
+                continue;
             }
-        }
 
-        if (!empty($filters['user_agent'])) {
-            if (!str_contains(strtolower((string)($entry['user_agent'] ?? '')), strtolower($filters['user_agent']))) {
-                return false;
+            while (($line = fgets($handle)) !== false) {
+                $entry = json_decode(trim($line), true);
+                if (!$entry) {
+                    continue;
+                }
+                if ($match($entry)) {
+                    $matched[] = $entry;
+                }
             }
+            fclose($handle);
         }
 
-        if (!empty($filters['category'])) {
-            if (!str_contains(strtolower((string)($entry['category'] ?? '')), strtolower($filters['category']))) {
-                return false;
-            }
-        }
-
-        if (!empty($filters['search'])) {
-            if (!str_contains(strtolower((string)($entry['message'] ?? '')), strtolower($filters['search']))) {
-                return false;
-            }
-        }
-
-        $context = is_array($entry['context'] ?? null) ? $entry['context'] : null;
-
-        foreach ($filters['context'] ?? [] as $contextFilter) {
-            if (!$contextFilter->matches($context)) {
-                return false;
-            }
-        }
-
-        if (!empty($filters['context_search']) && !ContextFilter::containsTerm($context, $filters['context_search'])) {
-            return false;
-        }
-
-        if (!empty($filters['date_from']) && !$this->withinBound($entry, $filters['date_from'], before: false)) {
-            return false;
-        }
-
-        if (!empty($filters['date_to']) && !$this->withinBound($entry, $filters['date_to'], before: true)) {
-            return false;
-        }
-
-        return true;
-    }
-
-    /** True if the entry's timestamp is on the correct side of the given bound. */
-    private function withinBound(array $entry, string $bound, bool $before): bool
-    {
-        try {
-            $entryTs = new \DateTimeImmutable($entry['timestamp'] ?? 'now');
-            // Bounds without an offset are UTC (what the UI and DateRange send),
-            // whatever PHP's default time zone is.
-            $boundTs = new \DateTimeImmutable($bound, new \DateTimeZone('UTC'));
-            return $before ? $entryTs <= $boundTs : $entryTs >= $boundTs;
-        } catch (\Throwable) {
-            return false;
-        }
+        return $matched;
     }
 }

@@ -78,6 +78,26 @@ mysql -u root -p < migrations/001_logs.sql
 php bin/server.php
 ```
 
+### Storage: control plane and log store
+
+Two settings decide where things are kept:
+
+| Setting | Holds | Values |
+|---|---|---|
+| `STORAGE_TYPE` | **Control plane**: write auth (per-client keys or `API_SECRET`), clients, retention policies, retention run history | `file` (default), `mariadb` |
+| `LOG_STORE` | **Log store**: where entries are written, searched, pruned and measured | `file`, `mariadb`; defaults to `STORAGE_TYPE` |
+
+Leave `LOG_STORE` unset and nothing changes: everything lives where
+`STORAGE_TYPE` says. Setting it lets the two differ, for example
+`STORAGE_TYPE=mariadb` with `LOG_STORE=file` keeps registered clients and
+policies in MariaDB while entries go to JSONL files. Both MariaDB roles use the
+same `DB_*` settings. `GET /api/info` reports both (`storage_type`, `log_store`).
+
+The server, `bin/retention.php` and `bin/prune.php` refuse to start on an
+unknown value (values are case-sensitive). `LOG_STORE=clickhouse` is reserved
+for the upcoming ClickHouse store ([#154](https://github.com/guibranco/logstream-server/issues/154))
+and is rejected until it ships.
+
 ---
 
 ## API Reference
