@@ -30,9 +30,11 @@ final class DatabasePruner implements PrunerInterface
         [$conditions, $params] = DatabaseConditionBuilder::build($policy);
 
         $sql  = 'DELETE FROM log_entries WHERE ' . implode(' AND ', $conditions);
-        $stmt = $this->db->pdo()->prepare($sql);
-        $stmt->execute($params);
-
-        return $stmt->rowCount();
+        // Re-running a retention DELETE only removes what is still due.
+        return $this->db->run(static function (\PDO $pdo) use ($sql, $params): int {
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            return $stmt->rowCount();
+        });
     }
 }

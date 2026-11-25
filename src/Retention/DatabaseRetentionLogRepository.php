@@ -19,14 +19,7 @@ final class DatabaseRetentionLogRepository implements RetentionLogRepositoryInte
 
     public function record(RetentionResult $result): void
     {
-        $stmt = $this->db->pdo()->prepare(
-            'INSERT INTO retention_log
-                (policy_name, deleted, dry_run, duration_ms, summary, warnings, error, ran_at)
-             VALUES
-                (:policy_name, :deleted, :dry_run, :duration_ms, :summary, :warnings, :error, :ran_at)',
-        );
-
-        $stmt->execute([
+        $params = [
             ':policy_name' => $result->policy,
             ':deleted'     => max(0, $result->pruned),
             ':dry_run'     => $result->dryRun ? 1 : 0,
@@ -37,7 +30,15 @@ final class DatabaseRetentionLogRepository implements RetentionLogRepositoryInte
                 : json_encode(array_values($result->warnings), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
             ':error'       => $result->error,
             ':ran_at'      => gmdate('Y-m-d H:i:s'),
-        ]);
+        ];
+
+        // Not retried: a lost reply could otherwise record the run twice.
+        $this->db->run(static fn(\PDO $pdo): bool => $pdo->prepare(
+            'INSERT INTO retention_log
+                (policy_name, deleted, dry_run, duration_ms, summary, warnings, error, ran_at)
+             VALUES
+                (:policy_name, :deleted, :dry_run, :duration_ms, :summary, :warnings, :error, :ran_at)',
+        )->execute($params), retry: false);
     }
 
     public function recent(\DateTimeImmutable $since, ?string $policy = null, int $limit = 500): array
@@ -56,11 +57,14 @@ final class DatabaseRetentionLogRepository implements RetentionLogRepositoryInte
         // native prepares on MariaDB).
         $sql .= ' ORDER BY ran_at DESC, id DESC LIMIT ' . max(1, $limit);
 
-        $stmt = $this->db->pdo()->prepare($sql);
-        $stmt->execute($params);
+        $rows = $this->db->run(static function (\PDO $pdo) use ($sql, $params): array {
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+        });
 
         $entries = [];
-        foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+        foreach ($rows as $row) {
             $entries[] = new RetentionLogEntry(
                 id:         (int) $row['id'],
                 policy:     (string) $row['policy_name'],

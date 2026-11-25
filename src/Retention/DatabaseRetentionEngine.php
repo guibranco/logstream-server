@@ -30,14 +30,19 @@ final class DatabaseRetentionEngine implements RetentionEngineInterface
 
         if ($dryRun) {
             $sql   = 'SELECT COUNT(*) FROM log_entries WHERE ' . $whereClause;
-            $stmt  = $this->db->pdo()->prepare($sql);
-            $stmt->execute($params);
-            $count = (int) $stmt->fetchColumn();
+            $count = $this->db->run(static function (\PDO $pdo) use ($sql, $params): int {
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
+                return (int) $stmt->fetchColumn();
+            });
         } else {
+            // Re-running a retention DELETE only removes what is still due.
             $sql   = 'DELETE FROM log_entries WHERE ' . $whereClause;
-            $stmt  = $this->db->pdo()->prepare($sql);
-            $stmt->execute($params);
-            $count = $stmt->rowCount();
+            $count = $this->db->run(static function (\PDO $pdo) use ($sql, $params): int {
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
+                return $stmt->rowCount();
+            });
         }
 
         $durationMs = (int) ((hrtime(true) - $start) / 1_000_000);
