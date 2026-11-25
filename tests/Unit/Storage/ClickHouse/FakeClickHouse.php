@@ -19,7 +19,7 @@ final class FakeClickHouse
     public function client(?ClickHouseSettings $settings = null): ClickHouseClient
     {
         return new ClickHouseClient(
-            $settings ?? new ClickHouseSettings(user: 'logstream', password: 's3cret'),
+            $settings ?? new ClickHouseSettings(user: 'logstream', password: 'test-only-password'),
             function (string $url, array $headers, string $body): array {
                 parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
                 $this->requests[] = ['url' => $url, 'query' => $query, 'headers' => $headers, 'body' => $body];

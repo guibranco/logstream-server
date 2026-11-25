@@ -7,6 +7,7 @@ namespace LogService\Tests\Unit\Storage;
 use LogService\Auth\DatabaseWriteAuth;
 use LogService\Auth\SingleKeyWriteAuth;
 use LogService\Ingest\AsyncMysqlBatchWriter;
+use LogService\Ingest\ClickHouseBatchWriter;
 use LogService\Ingest\IngestConfig;
 use LogService\Ingest\StorageBatchWriter;
 use LogService\Repository\ClientRepository;
@@ -56,7 +57,7 @@ final class StorageFactoryTest extends TestCase
     #[Test]
     public function file_mode_builds_file_services_only(): void
     {
-        $factory = $this->factory(['API_SECRET' => 's3cret']);
+        $factory = $this->factory(['API_SECRET' => 'test-only-secret']);
         $factory->connect(); // nothing to connect to
 
         self::assertInstanceOf(SingleKeyWriteAuth::class, $factory->writeAuth());
@@ -131,7 +132,9 @@ final class StorageFactoryTest extends TestCase
         self::assertInstanceOf(DatabaseRetentionPolicyRepository::class, $factory->policyRepository('/unused.json'));
         self::assertInstanceOf(ClickHouseStorage::class, $factory->logStorage());
         self::assertSame('ClickHouse (http://ch.internal:8123/logs)', $factory->logStoreLabel());
-        self::assertSame('clickhouse-http', $factory->batchWriter(IngestConfig::fromEnv([]), $factory->logStorage())->name());
+        // DB_DRIVER=async (the default): non-blocking HTTP; pdo: blocking writes through the storage.
+        self::assertInstanceOf(ClickHouseBatchWriter::class, $factory->batchWriter(IngestConfig::fromEnv([]), $factory->logStorage()));
+        self::assertSame('clickhouse-http', $factory->batchWriter(IngestConfig::fromEnv(['DB_DRIVER' => 'pdo']), $factory->logStorage())->name());
     }
 
     #[Test]

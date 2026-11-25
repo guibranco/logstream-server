@@ -971,8 +971,9 @@ components:
           nullable: true
           enum: [async, pdo, null]
           description: |
-            Client used to write buffered entries to MariaDB (`DB_DRIVER`).
-            `null` for file storage; absent in sync mode.
+            Client used to write buffered entries to MariaDB or ClickHouse
+            (`DB_DRIVER`): `async` is non-blocking, `pdo` blocks the event loop
+            while a batch is written. `null` for file storage; absent in sync mode.
           example: async
 
     IngestStats:
@@ -983,7 +984,7 @@ components:
           properties:
             writer:
               type: string
-              enum: [async-mysql, pdo-mysql, file]
+              enum: [async-mysql, pdo-mysql, clickhouse-async, clickhouse-http, file]
               example: async-mysql
             accepting:
               type: boolean

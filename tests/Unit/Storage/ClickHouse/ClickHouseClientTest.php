@@ -36,8 +36,8 @@ final class ClickHouseClientTest extends TestCase
         $fake->client()->request('SELECT 1');
 
         self::assertContains('X-ClickHouse-User: logstream', $fake->requests[0]['headers']);
-        self::assertContains('X-ClickHouse-Key: s3cret', $fake->requests[0]['headers']);
-        self::assertStringNotContainsString('s3cret', $fake->requests[0]['url']);
+        self::assertContains('X-ClickHouse-Key: test-only-password', $fake->requests[0]['headers']);
+        self::assertStringNotContainsString('test-only-password', $fake->requests[0]['url']);
     }
 
     #[Test]

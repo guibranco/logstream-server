@@ -27,13 +27,13 @@ final class MariaDbSettingsTest extends TestCase
     {
         $settings = MariaDbSettings::fromEnv([
             'DB_HOST' => 'db.internal', 'DB_PORT' => '3307', 'DB_NAME' => 'logs',
-            'DB_USER' => 'logstream', 'DB_PASS' => ' p@ss ',
+            'DB_USER' => 'logstream', 'DB_PASS' => ' test only password ',
         ]);
 
         self::assertSame('mysql:host=db.internal;port=3307;dbname=logs;charset=utf8mb4', $settings->dsn());
         self::assertSame('db.internal:3307/logs', $settings->label());
         self::assertSame('logstream', $settings->user);
-        self::assertSame(' p@ss ', $settings->password, 'passwords are used as given');
+        self::assertSame(' test only password ', $settings->password, 'passwords are used as given');
     }
 
     #[Test]

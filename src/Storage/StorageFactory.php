@@ -11,6 +11,7 @@ use LogService\Auth\WriteAuthInterface;
 use LogService\Database\Connection;
 use LogService\Ingest\AsyncMysqlBatchWriter;
 use LogService\Ingest\BatchWriterInterface;
+use LogService\Ingest\ClickHouseBatchWriter;
 use LogService\Ingest\IngestConfig;
 use LogService\Ingest\StorageBatchWriter;
 use LogService\Repository\ClientRepository;
@@ -196,7 +197,11 @@ final class StorageFactory
             );
         }
 
-        // ClickHouse: blocking HTTP inserts for now; the non-blocking writer is the next step of #157.
+        if ($this->clickhouse !== null && $ingest->dbDriver === IngestConfig::DRIVER_ASYNC) {
+            return new ClickHouseBatchWriter($this->clickhouse);
+        }
+
+        // DB_DRIVER=pdo: blocking writes through the storage (blocking HTTP for ClickHouse).
         return new StorageBatchWriter($storage, match ($this->config->logStore) {
             StorageConfig::MARIADB    => 'pdo-mysql',
             StorageConfig::CLICKHOUSE => 'clickhouse-http',

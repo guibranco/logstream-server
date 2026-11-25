@@ -893,7 +893,8 @@ final class Router
 
         $info = [
             'mode'      => IngestConfig::MODE_BUFFERED,
-            'db_driver' => $this->logStore === 'mariadb' ? $this->ingestDbDriver : null,
+            // DB_DRIVER picks the writer for both database log stores.
+            'db_driver' => in_array($this->logStore, ['mariadb', 'clickhouse'], true) ? $this->ingestDbDriver : null,
         ];
 
         return $withStats ? $info + $this->ingestBuffer->stats() : $info;

@@ -1,11 +1,10 @@
 # ClickHouse log store
 
-> **Status:** usable for writing and searching. Still to come
-> ([#154](https://github.com/guibranco/logstream-server/issues/154)): the
-> non-blocking batch writer (#157; buffered ingest uses blocking HTTP inserts
-> meanwhile), retention policies (#158; the table's 35-day TTL applies
-> meanwhile, and `bin/retention.php` / `bin/prune.php` exit with a message), and
-> the MariaDB → ClickHouse copy (#159).
+> **Status:** usable for ingest and search. Still to come
+> ([#154](https://github.com/guibranco/logstream-server/issues/154)): retention
+> policies (#158; the table's 35-day TTL applies meanwhile, and
+> `bin/retention.php` / `bin/prune.php` exit with a message) and the
+> MariaDB → ClickHouse copy (#159).
 
 ClickHouse holds **log entries only**. Clients, retention policies and the
 retention log stay in the control-plane database (`STORAGE_TYPE`). See
@@ -47,6 +46,12 @@ run on file, MariaDB and ClickHouse:
 Reads use `FINAL`, so an entry written twice by a retried batch is returned once.
 Writes use ClickHouse's asynchronous inserts, so many small inserts (sync ingest)
 don't create a part each.
+
+**Buffered ingest** (the default) flushes each batch with a non-blocking HTTP
+request (`clickhouse-async` in `/api/health`), so HTTP, WebSocket and UDP keep
+being served while ClickHouse writes. A failed flush is retried by the ingest
+buffer with backoff (0.5 s doubling to 30 s), like MariaDB. `DB_DRIVER=pdo`
+switches to blocking writes (`clickhouse-http`).
 
 ## Schema
 
