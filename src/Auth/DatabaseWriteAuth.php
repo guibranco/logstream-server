@@ -86,11 +86,13 @@ final class DatabaseWriteAuth implements WriteAuthInterface, CacheFlushableInter
         }
 
         try {
-            $stmt = $this->db->pdo()->prepare(
-                'SELECT api_token FROM clients WHERE app_key = :app_key AND active = 1 LIMIT 1'
-            );
-            $stmt->execute([':app_key' => $appKey]);
-            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            $row = $this->db->run(static function (\PDO $pdo) use ($appKey): array|false {
+                $stmt = $pdo->prepare(
+                    'SELECT api_token FROM clients WHERE app_key = :app_key AND active = 1 LIMIT 1'
+                );
+                $stmt->execute([':app_key' => $appKey]);
+                return $stmt->fetch(\PDO::FETCH_ASSOC);
+            });
         } catch (\Throwable $e) {
             // DB error — fail closed, do not cache
             return null;

@@ -36,28 +36,28 @@ class ClientRepository
     /** @return Client[] All registered clients, ordered by name. */
     public function all(): array
     {
-        $stmt = $this->db->pdo()->query(
+        $rows = $this->db->run(static fn(\PDO $pdo): array => $pdo->query(
             'SELECT ' . self::COLUMNS . '
              FROM clients
              ORDER BY name ASC'
-        );
-        return array_map(
-            fn(array $row) => $this->hydrate($row),
-            $stmt->fetchAll(\PDO::FETCH_ASSOC),
-        );
+        )->fetchAll(\PDO::FETCH_ASSOC));
+
+        return array_map(fn(array $row) => $this->hydrate($row), $rows);
     }
 
     /** Find by app_key; returns null when not found. */
     public function findByKey(string $appKey): ?Client
     {
-        $stmt = $this->db->pdo()->prepare(
-            'SELECT ' . self::COLUMNS . '
-             FROM clients
-             WHERE app_key = :app_key
-             LIMIT 1'
-        );
-        $stmt->execute([':app_key' => $appKey]);
-        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        $row = $this->db->run(static function (\PDO $pdo) use ($appKey): array|false {
+            $stmt = $pdo->prepare(
+                'SELECT ' . self::COLUMNS . '
+                 FROM clients
+                 WHERE app_key = :app_key
+                 LIMIT 1'
+            );
+            $stmt->execute([':app_key' => $appKey]);
+            return $stmt->fetch(\PDO::FETCH_ASSOC);
+        });
         return $row ? $this->hydrate($row) : null;
     }
 
@@ -79,17 +79,21 @@ class ClientRepository
 
         $token = $this->generateToken();
 
-        $this->db->pdo()->prepare(
-            'INSERT INTO clients (name, app_key, api_token)
-             VALUES (:name, :app_key, :api_token)'
-        )->execute([
-            ':name'      => $name,
-            ':app_key'   => $appKey,
-            ':api_token' => $token,
-        ]);
+        // Not retried: if the connection drops mid-INSERT the row may exist.
+        $id = $this->db->run(static function (\PDO $pdo) use ($name, $appKey, $token): int {
+            $pdo->prepare(
+                'INSERT INTO clients (name, app_key, api_token)
+                 VALUES (:name, :app_key, :api_token)'
+            )->execute([
+                ':name'      => $name,
+                ':app_key'   => $appKey,
+                ':api_token' => $token,
+            ]);
+            return (int) $pdo->lastInsertId();
+        }, retry: false);
 
         return new Client(
-            id:        (int) $this->db->pdo()->lastInsertId(),
+            id:        $id,
             name:      $name,
             appKey:    $appKey,
             active:    true,
@@ -110,7 +114,7 @@ class ClientRepository
             throw new \RuntimeException("Client '{$appKey}' not found.");
         }
 
-        $this->db->pdo()->prepare(
+        $this->db->run(static fn(\PDO $pdo): bool => $pdo->prepare(
             'UPDATE clients
              SET name = :name, active = :active
              WHERE app_key = :app_key'
@@ -118,7 +122,7 @@ class ClientRepository
             ':name'    => $name,
             ':active'  => (int) $active,
             ':app_key' => $appKey,
-        ]);
+        ]));
 
         return $this->findByKey($appKey);
     }
@@ -141,12 +145,12 @@ class ClientRepository
 
         $token = $this->generateToken();
 
-        $this->db->pdo()->prepare(
+        $this->db->run(static fn(\PDO $pdo): bool => $pdo->prepare(
             'UPDATE clients SET api_token = :api_token WHERE app_key = :app_key'
         )->execute([
             ':api_token' => $token,
             ':app_key'   => $appKey,
-        ]);
+        ]));
 
         $refreshed = $this->findByKey($appKey);
         return new Client(
@@ -179,12 +183,12 @@ class ClientRepository
             throw new \RuntimeException("Client '{$appKey}' not found.");
         }
 
-        $this->db->pdo()->prepare(
+        $this->db->run(static fn(\PDO $pdo): bool => $pdo->prepare(
             'UPDATE clients SET heartbeat_timeout_min = :minutes WHERE app_key = :app_key'
         )->execute([
             ':minutes' => $minutes,
             ':app_key' => $appKey,
-        ]);
+        ]));
 
         return $this->findByKey($appKey);
     }
@@ -203,25 +207,28 @@ class ClientRepository
             return 0;
         }
 
-        $stmt = $this->db->pdo()->prepare(
-            'UPDATE clients
-             SET last_seen_at = :seen, updated_at = updated_at
-             WHERE app_key = :app_key
-               AND (last_seen_at IS NULL OR last_seen_at < :seen_cmp)'
-        );
+        // Idempotent (a time only moves forward), so a retry is safe.
+        return $this->db->run(static function (\PDO $pdo) use ($seen): int {
+            $stmt = $pdo->prepare(
+                'UPDATE clients
+                 SET last_seen_at = :seen, updated_at = updated_at
+                 WHERE app_key = :app_key
+                   AND (last_seen_at IS NULL OR last_seen_at < :seen_cmp)'
+            );
 
-        $updated = 0;
-        foreach ($seen as $appKey => $at) {
-            $value = $at->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
-            $stmt->execute([
-                ':seen'     => $value,
-                ':seen_cmp' => $value,
-                ':app_key'  => (string) $appKey,
-            ]);
-            $updated += $stmt->rowCount();
-        }
+            $updated = 0;
+            foreach ($seen as $appKey => $at) {
+                $value = $at->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s');
+                $stmt->execute([
+                    ':seen'     => $value,
+                    ':seen_cmp' => $value,
+                    ':app_key'  => (string) $appKey,
+                ]);
+                $updated += $stmt->rowCount();
+            }
 
-        return $updated;
+            return $updated;
+        });
     }
 
     /**
@@ -238,29 +245,40 @@ class ClientRepository
             throw new \RuntimeException("Client '{$appKey}' not found.");
         }
 
-        $this->db->pdo()->beginTransaction();
-
         try {
-            $stmt = $this->db->pdo()->prepare(
-                'DELETE FROM log_entries WHERE app_key = :app_key'
-            );
-            $stmt->execute([':app_key' => $appKey]);
-            $logsDeleted = $stmt->rowCount();
+            // The whole transaction is retried if the connection drops: the
+            // server rolls back the unfinished one when the session ends.
+            return $this->db->run(static function (\PDO $pdo) use ($appKey): int {
+                $pdo->beginTransaction();
 
-            $this->db->pdo()->prepare(
-                'DELETE FROM clients WHERE app_key = :app_key'
-            )->execute([':app_key' => $appKey]);
+                try {
+                    $stmt = $pdo->prepare('DELETE FROM log_entries WHERE app_key = :app_key');
+                    $stmt->execute([':app_key' => $appKey]);
+                    $logsDeleted = $stmt->rowCount();
 
-            $this->db->pdo()->commit();
+                    $pdo->prepare('DELETE FROM clients WHERE app_key = :app_key')
+                        ->execute([':app_key' => $appKey]);
+
+                    $pdo->commit();
+                } catch (\Throwable $e) {
+                    try {
+                        if ($pdo->inTransaction()) {
+                            $pdo->rollBack();
+                        }
+                    } catch (\PDOException) {
+                        // Connection already gone; the server rolled back.
+                    }
+                    throw $e;
+                }
+
+                return $logsDeleted;
+            });
         } catch (\Throwable $e) {
-            $this->db->pdo()->rollBack();
             throw new \RuntimeException(
                 "Failed to delete client '{$appKey}': " . $e->getMessage(),
                 previous: $e,
             );
         }
-
-        return $logsDeleted;
     }
 
     // ──────────────────────────────────────────────────────────────────────────

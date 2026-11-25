@@ -68,11 +68,14 @@ final class DatabaseRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerIn
              . ' FROM (SELECT ' . implode(', ', $inner) . ' FROM log_entries) t) u'
              . ' GROUP BY day';
 
-        $stmt = $this->db->pdo()->prepare($sql);
-        $stmt->execute($params);
+        $rows = $this->db->run(static function (\PDO $pdo) use ($sql, $params): array {
+            $stmt = $pdo->prepare($sql);
+            $stmt->execute($params);
+            return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+        });
 
         $daily = [];
-        foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+        foreach ($rows as $row) {
             $stats = [];
             foreach ($active as $i => $policy) {
                 $stats[$policy->name] = [
@@ -116,9 +119,11 @@ final class DatabaseRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerIn
     private function tableStorage(): ?array
     {
         try {
-            $stmt = $this->db->pdo()->prepare(self::STORAGE_SQL);
-            $stmt->execute([':table' => self::TABLE]);
-            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            $row = $this->db->run(static function (\PDO $pdo): array|false {
+                $stmt = $pdo->prepare(self::STORAGE_SQL);
+                $stmt->execute([':table' => self::TABLE]);
+                return $stmt->fetch(\PDO::FETCH_ASSOC);
+            });
         } catch (\PDOException $e) {
             // Logged so a permissions or query problem in MariaDB mode can be told
             // apart from the expected null in file mode; the report still loads.

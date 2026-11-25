@@ -44,15 +44,17 @@ final class MariaDBStorage implements StorageInterface
             return;
         }
 
-        $pdo    = $this->db->pdo();
-        $driver = (string) $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME);
-
         $params = [];
         foreach ($entries as $entry) {
             array_push($params, ...self::row($entry));
         }
+        $rows = count($entries);
 
-        $pdo->prepare(self::insertSql(count($entries), $driver))->execute($params);
+        // Safe to retry: re-inserting a stored id is a no-op (see above).
+        $this->db->run(static function (\PDO $pdo) use ($rows, $params): bool {
+            $driver = (string) $pdo->getAttribute(\PDO::ATTR_DRIVER_NAME);
+            return $pdo->prepare(self::insertSql($rows, $driver))->execute($params);
+        });
     }
 
     /**
@@ -112,23 +114,26 @@ final class MariaDBStorage implements StorageInterface
         // Data query
         $sql = "SELECT * FROM log_entries {$whereClause} ORDER BY timestamp DESC LIMIT :limit OFFSET :offset";
 
-        $stmt = $this->db->pdo()->prepare($sql);
-        foreach ($params as $key => $val) {
-            $stmt->bindValue($key, $val);
-        }
-        $stmt->bindValue(':limit',  $limit,  \PDO::PARAM_INT);
-        $stmt->bindValue(':offset', $offset, \PDO::PARAM_INT);
-        $stmt->execute();
-        $rows = $stmt->fetchAll();
+        $countSql = "SELECT COUNT(*) FROM log_entries {$whereClause}";
 
-        // Count query
-        $countSql  = "SELECT COUNT(*) FROM log_entries {$whereClause}";
-        $countStmt = $this->db->pdo()->prepare($countSql);
-        foreach ($params as $key => $val) {
-            $countStmt->bindValue($key, $val);
-        }
-        $countStmt->execute();
-        $total = (int) $countStmt->fetchColumn();
+        [$rows, $total] = $this->db->run(static function (\PDO $pdo) use ($sql, $countSql, $params, $limit, $offset): array {
+            $stmt = $pdo->prepare($sql);
+            foreach ($params as $key => $val) {
+                $stmt->bindValue($key, $val);
+            }
+            $stmt->bindValue(':limit',  $limit,  \PDO::PARAM_INT);
+            $stmt->bindValue(':offset', $offset, \PDO::PARAM_INT);
+            $stmt->execute();
+            $rows = $stmt->fetchAll();
+
+            $countStmt = $pdo->prepare($countSql);
+            foreach ($params as $key => $val) {
+                $countStmt->bindValue($key, $val);
+            }
+            $countStmt->execute();
+
+            return [$rows, (int) $countStmt->fetchColumn()];
+        });
 
         return [
             'total'   => $total,
@@ -142,11 +147,13 @@ final class MariaDBStorage implements StorageInterface
 
     public function findById(string $id): ?LogEntry
     {
-        $stmt = $this->db->pdo()->prepare(
-            "SELECT * FROM log_entries WHERE id = :id OR trace_id = :trace_id LIMIT 1"
-        );
-        $stmt->execute([':id' => $id, ':trace_id' => $id]);
-        $row = $stmt->fetch();
+        $row = $this->db->run(static function (\PDO $pdo) use ($id): array|false {
+            $stmt = $pdo->prepare(
+                "SELECT * FROM log_entries WHERE id = :id OR trace_id = :trace_id LIMIT 1"
+            );
+            $stmt->execute([':id' => $id, ':trace_id' => $id]);
+            return $stmt->fetch();
+        });
 
         return $row ? LogEntry::fromArray($row) : null;
     }

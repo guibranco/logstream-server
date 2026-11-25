@@ -12,35 +12,40 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
 
     public function all(): array
     {
-        $stmt = $this->db->pdo()->query('SELECT * FROM retention_policies ORDER BY name');
-        return array_map(
-            fn(array $row) => $this->rowToPolicy($row),
-            $stmt->fetchAll(),
+        $rows = $this->db->run(
+            static fn(\PDO $pdo): array => $pdo->query('SELECT * FROM retention_policies ORDER BY name')->fetchAll(),
         );
+        return array_map(fn(array $row) => $this->rowToPolicy($row), $rows);
     }
 
     public function find(string $name): ?RetentionPolicy
     {
-        $stmt = $this->db->pdo()->prepare('SELECT * FROM retention_policies WHERE name = :name');
-        $stmt->execute([':name' => $name]);
-        $row = $stmt->fetch();
+        $row = $this->db->run(static function (\PDO $pdo) use ($name): array|false {
+            $stmt = $pdo->prepare('SELECT * FROM retention_policies WHERE name = :name');
+            $stmt->execute([':name' => $name]);
+            return $stmt->fetch();
+        });
         return $row !== false ? $this->rowToPolicy($row) : null;
     }
 
     public function create(RetentionPolicy $policy): void
     {
-        $stmt = $this->db->pdo()->prepare(
+        $params = $this->policyToParams($policy);
+
+        // Not retried: if the connection drops mid-INSERT the row may exist.
+        $this->db->run(static fn(\PDO $pdo): bool => $pdo->prepare(
             'INSERT INTO retention_policies
                 (name, app_key, app_id, level, category, transport, message_regex, message_glob, older_than_days, older_than_hours)
              VALUES
                 (:name, :app_key, :app_id, :level, :category, :transport, :message_regex, :message_glob, :older_than_days, :older_than_hours)',
-        );
-        $stmt->execute($this->policyToParams($policy));
+        )->execute($params), retry: false);
     }
 
     public function update(RetentionPolicy $policy): void
     {
-        $stmt = $this->db->pdo()->prepare(
+        $params = $this->policyToParams($policy);
+
+        $this->db->run(static fn(\PDO $pdo): bool => $pdo->prepare(
             'UPDATE retention_policies
              SET app_key         = :app_key,
                  app_id          = :app_id,
@@ -53,14 +58,14 @@ final class DatabaseRetentionPolicyRepository implements RetentionPolicyReposito
                  older_than_hours = :older_than_hours,
                  updated_at      = CURRENT_TIMESTAMP
              WHERE name = :name',
-        );
-        $stmt->execute($this->policyToParams($policy));
+        )->execute($params));
     }
 
     public function delete(string $name): void
     {
-        $stmt = $this->db->pdo()->prepare('DELETE FROM retention_policies WHERE name = :name');
-        $stmt->execute([':name' => $name]);
+        $this->db->run(static fn(\PDO $pdo): bool => $pdo
+            ->prepare('DELETE FROM retention_policies WHERE name = :name')
+            ->execute([':name' => $name]));
     }
 
     // ──────────────────────────────────────────────────────────────────────────
