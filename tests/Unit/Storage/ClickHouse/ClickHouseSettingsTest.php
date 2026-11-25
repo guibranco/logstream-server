@@ -30,13 +30,13 @@ final class ClickHouseSettingsTest extends TestCase
     {
         $settings = ClickHouseSettings::fromEnv([
             'CLICKHOUSE_URL' => 'https://ch.internal:8443/', 'CLICKHOUSE_DATABASE' => 'logs',
-            'CLICKHOUSE_USER' => 'logstream', 'CLICKHOUSE_PASSWORD' => ' p@ss ', 'CLICKHOUSE_TIMEOUT' => '2.5',
+            'CLICKHOUSE_USER' => 'logstream', 'CLICKHOUSE_PASSWORD' => ' test only password ', 'CLICKHOUSE_TIMEOUT' => '2.5',
         ]);
 
         self::assertSame('https://ch.internal:8443/', $settings->url);
         self::assertSame('https://ch.internal:8443/logs', $settings->label());
         self::assertSame('logstream', $settings->user);
-        self::assertSame(' p@ss ', $settings->password, 'passwords are used as given');
+        self::assertSame(' test only password ', $settings->password, 'passwords are used as given');
         self::assertSame(2.5, $settings->timeout);
     }
 

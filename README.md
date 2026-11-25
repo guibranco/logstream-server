@@ -99,8 +99,7 @@ unknown value (values are case-sensitive).
 `LOG_STORE=clickhouse` keeps entries in ClickHouse (`CLICKHOUSE_*` settings;
 see [docs/clickhouse.md](docs/clickhouse.md)). It is being rolled out in steps
 ([#154](https://github.com/guibranco/logstream-server/issues/154)): retention
-policies don't run on it yet, and buffered ingest writes with blocking HTTP
-until the non-blocking writer lands.
+policies don't run on it yet ([#158](https://github.com/guibranco/logstream-server/issues/158)).
 
 ---
 

@@ -81,19 +81,36 @@ final class ClickHouseClient
             return;
         }
 
+        [$url, $headers, $body] = $this->insertRequest($table, $columns, $rows);
+        [$status, $response]    = ($this->transport)($url, $headers, $body);
+
+        if ($status !== 200) {
+            throw new ClickHouseException(self::describeError($status, $response));
+        }
+    }
+
+    /**
+     * The HTTP request for an insert, so the blocking path above and the
+     * non-blocking ClickHouseBatchWriter send exactly the same thing.
+     *
+     * @param list<string>               $columns
+     * @param list<array<string, mixed>> $rows
+     * @return array{0: string, 1: list<string>, 2: string} URL, headers, body
+     */
+    public function insertRequest(string $table, array $columns, array $rows): array
+    {
         $lines = '';
         foreach ($rows as $row) {
             $lines .= json_encode($row, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
         }
 
-        $this->request(
-            $lines,
-            settings: [
-                'query'                  => "INSERT INTO {$table} (" . implode(', ', $columns) . ') FORMAT JSONEachRow',
-                'async_insert'           => '1',
-                'wait_for_async_insert'  => '1',
-            ],
-        );
+        [$url, $headers] = $this->prepare([], [
+            'query'                 => "INSERT INTO {$table} (" . implode(', ', $columns) . ') FORMAT JSONEachRow',
+            'async_insert'          => '1',
+            'wait_for_async_insert' => '1',
+        ]);
+
+        return [$url, $headers, $lines];
     }
 
     /** True if the server answers /ping within the timeout. */
@@ -121,6 +138,37 @@ final class ClickHouseClient
      */
     public function request(string $body, array $params = [], array $settings = []): string
     {
+        [$url, $headers]     = $this->prepare($params, $settings);
+        [$status, $response] = ($this->transport)($url, $headers, $body);
+
+        if ($status !== 200) {
+            throw new ClickHouseException(self::describeError($status, $response));
+        }
+
+        return $response;
+    }
+
+    /**
+     * First line of ClickHouse's error ("Code: 62. DB::Exception: …"), without
+     * the version and the stack trace.
+     */
+    public static function describeError(int $status, string $body): string
+    {
+        $first = trim(strtok($body, "\n") ?: '');
+        $first = preg_replace('/\s*\(version .*\)\s*$/', '', $first) ?? $first;   // "(version 26.8.30.8 (official build))"
+
+        return "ClickHouse error (HTTP {$status})" . ($first !== '' ? ": {$first}" : '');
+    }
+
+    /**
+     * URL (database, settings, param_<name> values) and headers (credentials).
+     *
+     * @param array<string, string|int|float> $params
+     * @param array<string, string>           $settings
+     * @return array{0: string, 1: list<string>}
+     */
+    private function prepare(array $params, array $settings): array
+    {
         $query = ['database' => $this->settings->database]
             + $settings
             + [
@@ -128,26 +176,20 @@ final class ClickHouseClient
                 'output_format_json_quote_64bit_integers' => '0',
             ];
         foreach ($params as $name => $value) {
-            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $name)) {
+            if (!preg_match('/^[A-Za-z_]\w*$/', $name)) {
                 throw new \InvalidArgumentException("Invalid ClickHouse parameter name '{$name}'");
             }
             $query['param_' . $name] = (string) $value;
         }
 
-        $url     = rtrim($this->settings->url, '/') . '/?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
-        $headers = [
-            'X-ClickHouse-User: ' . $this->settings->user,
-            'X-ClickHouse-Key: ' . $this->settings->password,
-            'Content-Type: text/plain; charset=utf-8',
+        return [
+            rtrim($this->settings->url, '/') . '/?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986),
+            [
+                'X-ClickHouse-User: ' . $this->settings->user,
+                'X-ClickHouse-Key: ' . $this->settings->password,
+                'Content-Type: text/plain; charset=utf-8',
+            ],
         ];
-
-        [$status, $response] = ($this->transport)($url, $headers, $body);
-
-        if ($status !== 200) {
-            throw new ClickHouseException(self::errorMessage($status, $response));
-        }
-
-        return $response;
     }
 
     /**
@@ -197,14 +239,5 @@ final class ClickHouseClient
         }
 
         return [$status, $response];
-    }
-
-    /** First line of ClickHouse's error ("Code: 62. DB::Exception: …"), without the stack trace. */
-    private static function errorMessage(int $status, string $body): string
-    {
-        $first = trim(strtok($body, "\n") ?: '');
-        $first = preg_replace('/\s*\(version .*\)\s*$/', '', $first) ?? $first;   // "(version 26.8.30.8 (official build))"
-
-        return "ClickHouse error (HTTP {$status})" . ($first !== '' ? ": {$first}" : '');
     }
 }

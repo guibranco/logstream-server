@@ -46,6 +46,29 @@ final class ClickHouseStorageContractTest extends StorageContractTestCase
     }
 
     #[Test]
+    public function the_async_batch_writer_stores_entries_the_storage_reads_back(): void
+    {
+        $client = ClickHouseTestDatabase::client();
+        ClickHouseTestDatabase::truncate($client);
+
+        $loop    = \React\EventLoop\Loop::get();
+        $writer  = new \LogService\Ingest\ClickHouseBatchWriter($client, new \React\Http\Browser(null, $loop));
+        $settled = null;
+        $writer->write(array_values($this->seeded))->then(
+            function () use (&$settled, $loop) { $settled = true; $loop->stop(); },
+            function (\Throwable $e) use (&$settled, $loop) { $settled = $e; $loop->stop(); },
+        );
+        $guard = $loop->addTimer(30, static fn() => $loop->stop());
+        $loop->run();
+        $loop->cancelTimer($guard);
+
+        self::assertTrue($settled, $settled instanceof \Throwable ? $settled->getMessage() : 'write never settled');
+        foreach ($this->seeded as $suffix => $entry) {
+            self::assertSame($entry->toArray(), $this->storage->findById($entry->id)?->toArray(), "entry {$suffix}");
+        }
+    }
+
+    #[Test]
     public function reports_itself_reachable(): void
     {
         $health = $this->storage->health();

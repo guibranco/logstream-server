@@ -37,7 +37,7 @@ final class BufferedIngestEndpointsTest extends TestCase
         $this->buffer = new IngestBuffer($this->writer, batchSize: 100, capacity: 200, loop: $this->loop);
     }
 
-    private function router(float $waitSeconds = 5.0): Router
+    private function router(float $waitSeconds = 5.0, ?string $logStore = null): Router
     {
         return new Router(
             storage:           $this->createStub(StorageInterface::class),
@@ -45,6 +45,7 @@ final class BufferedIngestEndpointsTest extends TestCase
             writeAuth:         new SingleKeyWriteAuth(''),
             uiSecret:          'ui',
             storageType:       'mariadb',
+            logStore:          $logStore,
             ingestBuffer:      $this->buffer,
             ingestWaitSeconds: $waitSeconds,
             ingestDbDriver:    IngestConfig::DRIVER_ASYNC,
@@ -254,6 +255,18 @@ final class BufferedIngestEndpointsTest extends TestCase
 
         self::assertTrue($body['features']['async_ingest']);
         self::assertSame(['mode' => 'buffered', 'db_driver' => 'async'], $body['ingest']);
+    }
+
+    #[Test]
+    public function info_reports_the_db_driver_for_both_database_log_stores(): void
+    {
+        foreach (['clickhouse' => 'async', 'file' => null] as $logStore => $expected) {
+            $body = json_decode((string) $this->router(logStore: $logStore)->handle(
+                new ServerRequest('GET', 'http://localhost/api/info'),
+            )->getBody(), true);
+
+            self::assertSame($expected, $body['ingest']['db_driver'], $logStore);
+        }
     }
 
     #[Test]
