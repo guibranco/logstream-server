@@ -74,30 +74,9 @@ final class DatabaseRetentionVolumeAnalyzer implements RetentionVolumeAnalyzerIn
             return $stmt->fetchAll(\PDO::FETCH_ASSOC);
         });
 
-        $daily = [];
-        foreach ($rows as $row) {
-            $stats = [];
-            foreach ($active as $i => $policy) {
-                $stats[$policy->name] = [
-                    'matched_count' => (int) $row["m{$i}_cnt"],
-                    'matched_bytes' => (int) $row["m{$i}_bytes"],
-                    'due_count'     => (int) $row["d{$i}_cnt"],
-                    'due_bytes'     => (int) $row["d{$i}_bytes"],
-                ];
-            }
-
-            $daily[(string) $row['day']] = [
-                'count'     => (int) $row['cnt'],
-                'bytes'     => (int) $row['bytes'],
-                'due_count' => (int) $row['due_cnt'],
-                'due_bytes' => (int) $row['due_bytes'],
-                'policies'  => $stats,
-            ];
-        }
-
         return RetentionVolumeReport::fromDailyTotals(
             $policies,
-            $daily,
+            RetentionVolumeReport::dailyFromAggregateRows($active, $rows),
             $days,
             RetentionVolumeReport::SIZE_BASIS_PAYLOAD,
             storage: $this->tableStorage(),

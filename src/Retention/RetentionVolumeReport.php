@@ -52,6 +52,41 @@ final class RetentionVolumeReport
     ) {}
 
     /**
+     * Daily totals from the rows of an aggregate query, for the database
+     * analyzers. Each row has day, cnt, bytes, due_cnt and due_bytes, and for
+     * the i-th active policy m{i}_cnt, m{i}_bytes, d{i}_cnt and d{i}_bytes.
+     *
+     * @param list<RetentionPolicy>            $active Non-empty policies, in query order.
+     * @param iterable<array<string, mixed>>   $rows
+     * @return array<string, array<string, mixed>> Keyed by Y-m-d, for fromDailyTotals().
+     */
+    public static function dailyFromAggregateRows(array $active, iterable $rows): array
+    {
+        $daily = [];
+        foreach ($rows as $row) {
+            $stats = [];
+            foreach ($active as $i => $policy) {
+                $stats[$policy->name] = [
+                    'matched_count' => (int) $row["m{$i}_cnt"],
+                    'matched_bytes' => (int) $row["m{$i}_bytes"],
+                    'due_count'     => (int) $row["d{$i}_cnt"],
+                    'due_bytes'     => (int) $row["d{$i}_bytes"],
+                ];
+            }
+
+            $daily[(string) $row['day']] = [
+                'count'     => (int) $row['cnt'],
+                'bytes'     => (int) $row['bytes'],
+                'due_count' => (int) $row['due_cnt'],
+                'due_bytes' => (int) $row['due_bytes'],
+                'policies'  => $stats,
+            ];
+        }
+
+        return $daily;
+    }
+
+    /**
      * @param RetentionPolicy[]                   $policies
      * @param array<string, array<string, mixed>> $daily    Per-day totals keyed by 'Y-m-d'.
      * @param array<string, mixed>|null           $storage  On-disk table size (data vs. indexes), when known.
