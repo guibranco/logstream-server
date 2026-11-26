@@ -82,9 +82,10 @@ final class DatabaseConditionBuilder
      * Convert a glob pattern to a SQL LIKE pattern.
      *
      * SQL wildcards (%, _) already present in the glob are escaped first so
-     * they are treated as literals, then * → % and ? → _.
+     * they are treated as literals, then * → % and ? → _. ClickHouse's LIKE
+     * uses the same escapes, so ClickHouseRetentionConditions reuses it.
      */
-    private static function globToLike(string $glob): string
+    public static function globToLike(string $glob): string
     {
         $like = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $glob);
         return str_replace(['*', '?'], ['%', '_'], $like);

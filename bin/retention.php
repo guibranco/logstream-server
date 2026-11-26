@@ -79,12 +79,6 @@ try {
     exit(1);
 }
 
-if (!$storageFactory->logStoreSupportsRetention()) {
-    fwrite(STDERR, "Retention is not available yet for LOG_STORE={$storageFactory->config->logStore} "
-        . "(guibranco/logstream-server#158). The table TTL removes entries after 35 days meanwhile.\n");
-    exit(1);
-}
-
 $engine     = $storageFactory->retentionEngine();
 $repository = $storageFactory->controlPlaneIsDatabase() ? $storageFactory->policyRepository($configPath) : null;
 $log        = $storageFactory->retentionLog();

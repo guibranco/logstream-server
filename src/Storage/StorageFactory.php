@@ -15,6 +15,8 @@ use LogService\Ingest\ClickHouseBatchWriter;
 use LogService\Ingest\IngestConfig;
 use LogService\Ingest\StorageBatchWriter;
 use LogService\Repository\ClientRepository;
+use LogService\Retention\ClickHouseRetentionEngine;
+use LogService\Retention\ClickHouseRetentionVolumeAnalyzer;
 use LogService\Retention\DatabasePruner;
 use LogService\Retention\DatabaseRetentionEngine;
 use LogService\Retention\DatabaseRetentionLogRepository;
@@ -57,8 +59,6 @@ final class StorageFactory
      * bad CLICKHOUSE_* setting fails at boot.
      */
     private readonly ?ClickHouseClient $clickhouse;
-
-    private const NO_RETENTION = 'Retention for LOG_STORE=clickhouse is not available yet (guibranco/logstream-server#158)';
 
     /**
      * @param array<string, mixed> $env         Usually $_ENV after Dotenv.
@@ -172,16 +172,6 @@ final class StorageFactory
     }
 
     /**
-     * Whether the retention engine, pruner and volume analyzer exist for this
-     * log store. Not yet for ClickHouse (guibranco/logstream-server#158); its
-     * 35-day TTL backstop still removes old entries meanwhile.
-     */
-    public function logStoreSupportsRetention(): bool
-    {
-        return $this->config->logStore !== StorageConfig::CLICKHOUSE;
-    }
-
-    /**
      * Writer used by the ingest buffer. MariaDB + INGEST_DB_DRIVER=async uses the
      * non-blocking ReactPHP client; everything else writes through the storage.
      */
@@ -213,7 +203,7 @@ final class StorageFactory
     {
         return match ($this->config->logStore) {
             StorageConfig::MARIADB    => new DatabaseRetentionEngine($this->logDb()),
-            StorageConfig::CLICKHOUSE => throw new \LogicException(self::NO_RETENTION),
+            StorageConfig::CLICKHOUSE => new ClickHouseRetentionEngine($this->clickhouse),
             default                   => new FileRetentionEngine($this->logPath()),
         };
     }
@@ -222,7 +212,7 @@ final class StorageFactory
     {
         return match ($this->config->logStore) {
             StorageConfig::MARIADB    => new DatabasePruner($this->logDb()),
-            StorageConfig::CLICKHOUSE => throw new \LogicException(self::NO_RETENTION),
+            StorageConfig::CLICKHOUSE => new ClickHouseRetentionEngine($this->clickhouse),
             default                   => new FileStoragePruner($this->logPath()),
         };
     }
@@ -232,7 +222,7 @@ final class StorageFactory
     {
         return match ($this->config->logStore) {
             StorageConfig::MARIADB    => new DatabaseRetentionVolumeAnalyzer($this->logDb()),
-            StorageConfig::CLICKHOUSE => throw new \LogicException(self::NO_RETENTION),
+            StorageConfig::CLICKHOUSE => new ClickHouseRetentionVolumeAnalyzer($this->clickhouse),
             default                   => new FileRetentionVolumeAnalyzer($this->logPath()),
         };
     }

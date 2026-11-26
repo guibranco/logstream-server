@@ -11,6 +11,8 @@ use LogService\Ingest\ClickHouseBatchWriter;
 use LogService\Ingest\IngestConfig;
 use LogService\Ingest\StorageBatchWriter;
 use LogService\Repository\ClientRepository;
+use LogService\Retention\ClickHouseRetentionEngine;
+use LogService\Retention\ClickHouseRetentionVolumeAnalyzer;
 use LogService\Retention\DatabasePruner;
 use LogService\Retention\DatabaseRetentionEngine;
 use LogService\Retention\DatabaseRetentionLogRepository;
@@ -138,21 +140,13 @@ final class StorageFactoryTest extends TestCase
     }
 
     #[Test]
-    public function clickhouse_has_no_retention_engine_yet(): void
+    public function clickhouse_has_its_own_retention_engine_pruner_and_volume_analyzer(): void
     {
         $factory = $this->factory(['LOG_STORE' => 'clickhouse']);
 
-        self::assertFalse($factory->logStoreSupportsRetention());
-        self::assertTrue($this->factory([])->logStoreSupportsRetention());
-
-        foreach (['retentionEngine', 'pruner', 'volumeAnalyzer'] as $method) {
-            try {
-                $factory->{$method}();
-                self::fail("{$method}() should refuse ClickHouse");
-            } catch (\LogicException $e) {
-                self::assertStringContainsString('#158', $e->getMessage());
-            }
-        }
+        self::assertInstanceOf(ClickHouseRetentionEngine::class, $factory->retentionEngine());
+        self::assertInstanceOf(ClickHouseRetentionEngine::class, $factory->pruner());
+        self::assertInstanceOf(ClickHouseRetentionVolumeAnalyzer::class, $factory->volumeAnalyzer());
     }
 
     #[Test]
