@@ -1,10 +1,8 @@
 # ClickHouse log store
 
-> **Status:** usable for ingest and search. Still to come
-> ([#154](https://github.com/guibranco/logstream-server/issues/154)): retention
-> policies (#158; the table's 35-day TTL applies meanwhile, and
-> `bin/retention.php` / `bin/prune.php` exit with a message) and the
-> MariaDB → ClickHouse copy (#159).
+> **Status:** ingest, search, retention and the volume chart work. Still to
+> come ([#154](https://github.com/guibranco/logstream-server/issues/154)): the
+> MariaDB → ClickHouse copy (#159) and the vinhedo5 deployment (#160).
 
 ClickHouse holds **log entries only**. Clients, retention policies and the
 retention log stay in the control-plane database (`STORAGE_TYPE`). See
@@ -52,6 +50,30 @@ request (`clickhouse-async` in `/api/health`), so HTTP, WebSocket and UDP keep
 being served while ClickHouse writes. A failed flush is retried by the ingest
 buffer with backoff (0.5 s doubling to 30 s), like MariaDB. `DB_DRIVER=pdo`
 switches to blocking writes (`clickhouse-http`).
+
+## Retention
+
+Policies, dry runs, the run history (`retention_log`, in the control plane)
+and the volume chart work as on MariaDB; `bin/retention.php` and
+`bin/prune.php` too. The same retention contract tests run on file, MariaDB
+and ClickHouse.
+
+| Policy | ClickHouse |
+|---|---|
+| Age only ("older than N days / hours") | Every daily partition that ends before the cutoff is **dropped whole** (instant, no rewrite); a lightweight `DELETE` removes what's left on the boundary day, if anything |
+| Any field filter (`app_key`, `level`, `transport`, `message_regex`, …) | Lightweight `DELETE` with the compiled conditions, waiting until the rows are gone |
+| Dry run | `SELECT count()` only, never a write |
+
+The reported count is taken just before the delete. Differences from MariaDB,
+both following the file store's matcher: `message_regex` is RE2 and
+**case-sensitive** (MariaDB's `REGEXP` follows the column collation and
+ignores case); `message_glob` ignores case on both.
+
+The volume chart counts payload bytes per UTC day like MariaDB, and its
+storage breakdown comes from `system.parts`: compressed column data as "data";
+marks, primary key and skip indexes as "index".
+
+The table's 35-day TTL stays as a backstop behind the policies.
 
 ## Schema
 
