@@ -274,7 +274,11 @@ jobs:
           DB_USER=$DB_USER
           DB_PASS=$DB_PASS
           EOF
-          ssh server 'sudo install -o logstream -g logstream -m 640 /dev/stdin /opt/logstream-server/.env' < .env.deploy
+          # Not `sudo install ... /dev/stdin`: Ubuntu 26.04's install (uutils)
+          # fails with "No such file or directory" when the target already
+          # exists. Write as logstream (umask 137 → 0640) and rename into place,
+          # so the server never reads a half-written .env.
+          ssh server 'sudo -u logstream sh -c "umask 137 && cat > /opt/logstream-server/.env.tmp && mv -f /opt/logstream-server/.env.tmp /opt/logstream-server/.env"' < .env.deploy
           rm -f .env.deploy
 
       - name: ♻️ Restart service and wait for health
