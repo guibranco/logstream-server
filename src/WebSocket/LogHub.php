@@ -55,7 +55,7 @@ final class LogHub implements MessageComponentInterface
             return;
         }
 
-        $this->clients->attach($conn);
+        $this->clients->offsetSet($conn);
 
         $conn->send($this->encode([
             'type'        => 'connected',
@@ -68,7 +68,7 @@ final class LogHub implements MessageComponentInterface
     public function onMessage(ConnectionInterface $from, $msg): void
     {
         // Ignore messages from unauthenticated connections that slipped through
-        if (!$this->clients->contains($from)) {
+        if (!$this->clients->offsetExists($from)) {
             $from->close();
             return;
         }
@@ -87,7 +87,7 @@ final class LogHub implements MessageComponentInterface
 
     public function onClose(ConnectionInterface $conn): void
     {
-        $this->clients->detach($conn);
+        $this->clients->offsetUnset($conn);
         echo sprintf("[WS] Client #%s disconnected (total: %d)\n", $conn->resourceId, $this->clients->count());
     }
 
